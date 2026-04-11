@@ -161,6 +161,9 @@ pub enum PlanWarningCode {
     LongDuration,
     NarrowWeatherWindow,
     LowPaintMargin,
+    /// A non-planar region was auto-subdivided into multiple planar
+    /// sub-regions by clustering face normals.
+    RegionSubdivided,
 }
 
 impl PlanWarningCode {
@@ -169,6 +172,7 @@ impl PlanWarningCode {
             Self::LongDuration => "long_duration",
             Self::NarrowWeatherWindow => "narrow_weather_window",
             Self::LowPaintMargin => "low_paint_margin",
+            Self::RegionSubdivided => "region_subdivided",
         }
     }
 }

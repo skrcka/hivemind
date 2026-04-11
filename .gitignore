@@ -53,3 +53,5 @@ node_modules/
 .LSOverride
 Thumbs.db
 desktop.ini
+
+test/*

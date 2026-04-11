@@ -5,7 +5,7 @@ use oracle::config::SlicerConfig;
 use oracle::domain::{
     fleet::{Drone, DroneState, FleetSnapshot},
     intent::{Face, Intent, MeshRegion, OperatorConstraints, ScanRef},
-    plan::PlanErrorCode,
+    plan::{PlanErrorCode, PlanWarningCode},
 };
 use oracle::slicer::{plan, SlicerError};
 
@@ -179,14 +179,157 @@ fn empty_fleet_yields_a_plan_with_an_error() {
 }
 
 #[test]
-fn region_with_inconsistent_normals_is_flagged() {
+fn region_with_inconsistent_normals_is_auto_subdivided() {
     let cfg = slicer_cfg();
     let mut intent = east_wall_intent();
-    // Replace the second face's normal with one that points the other way.
+    // Replace the second face's normal with one that points the opposite
+    // direction. The slicer should cluster the two faces into two planar
+    // sub-regions and emit a `region_subdivided` warning instead of failing.
     intent.regions[0].faces[1].normal = [-1.0, 0.0, 0.0];
     let plan = plan(intent, one_drone(), &cfg).expect("slicer still emits a plan");
-    assert!(plan
-        .errors
+
+    assert!(
+        plan.is_approvable(),
+        "auto-subdivided plan should still be approvable, errors: {:?}",
+        plan.errors
+    );
+    assert!(
+        plan.warnings
+            .iter()
+            .any(|w| w.code == PlanWarningCode::RegionSubdivided),
+        "expected RegionSubdivided warning, got {:?}",
+        plan.warnings
+    );
+
+    // Each sub-region should produce at least one pass.
+    assert!(plan.coverage.pass_count >= 2);
+}
+
+#[test]
+fn explicit_multi_planar_region_splits_into_clusters() {
+    let cfg = slicer_cfg();
+
+    // A region with three groups of faces, each group's normals pointing in
+    // a clearly distinct direction (+x, +y, +z). The clusterer should
+    // separate them into three sub-regions.
+    let intent = Intent {
+        version: "1.0".into(),
+        scan: ScanRef {
+            id: "test-multi-planar".into(),
+            source_file: None,
+            georeferenced: true,
+        },
+        regions: vec![MeshRegion {
+            id: "three_walls".into(),
+            name: "Three orthogonal walls".into(),
+            faces: vec![
+                // Two +x faces (east wall)
+                Face {
+                    vertices: [
+                        [10.0, -2.0, 0.0],
+                        [10.0, 2.0, 0.0],
+                        [10.0, 2.0, 3.0],
+                    ],
+                    normal: [1.0, 0.0, 0.0],
+                },
+                Face {
+                    vertices: [
+                        [10.0, -2.0, 0.0],
+                        [10.0, 2.0, 3.0],
+                        [10.0, -2.0, 3.0],
+                    ],
+                    normal: [1.0, 0.0, 0.0],
+                },
+                // Two +y faces (north wall)
+                Face {
+                    vertices: [
+                        [-2.0, 10.0, 0.0],
+                        [2.0, 10.0, 0.0],
+                        [2.0, 10.0, 3.0],
+                    ],
+                    normal: [0.0, 1.0, 0.0],
+                },
+                Face {
+                    vertices: [
+                        [-2.0, 10.0, 0.0],
+                        [2.0, 10.0, 3.0],
+                        [-2.0, 10.0, 3.0],
+                    ],
+                    normal: [0.0, 1.0, 0.0],
+                },
+                // Two +z faces (roof)
+                Face {
+                    vertices: [
+                        [-2.0, -2.0, 5.0],
+                        [2.0, -2.0, 5.0],
+                        [2.0, 2.0, 5.0],
+                    ],
+                    normal: [0.0, 0.0, 1.0],
+                },
+                Face {
+                    vertices: [
+                        [-2.0, -2.0, 5.0],
+                        [2.0, 2.0, 5.0],
+                        [-2.0, 2.0, 5.0],
+                    ],
+                    normal: [0.0, 0.0, 1.0],
+                },
+            ],
+            area_m2: 36.0,
+            paint_spec: None,
+        }],
+        constraints: OperatorConstraints::default(),
+    };
+
+    let plan = plan(intent, one_drone(), &cfg).expect("slicer ok");
+
+    assert!(plan.is_approvable(), "errors: {:?}", plan.errors);
+
+    let subdivision_warnings: Vec<_> = plan
+        .warnings
         .iter()
-        .any(|e| e.code == PlanErrorCode::NonPlanarRegion));
+        .filter(|w| w.code == PlanWarningCode::RegionSubdivided)
+        .collect();
+    assert_eq!(
+        subdivision_warnings.len(),
+        1,
+        "expected exactly one subdivision warning"
+    );
+    assert!(
+        subdivision_warnings[0].message.contains("3 planar sub-regions"),
+        "warning text should mention 3 sub-regions, got: {}",
+        subdivision_warnings[0].message
+    );
+
+    // Each of the 3 sub-regions should have produced at least one pass —
+    // 6 m² spaced 24 cm apart gives multiple passes per sub-region.
+    assert!(
+        plan.coverage.pass_count >= 3,
+        "expected ≥3 passes (one per sub-region), got {}",
+        plan.coverage.pass_count
+    );
+}
+
+#[test]
+fn planar_region_is_not_subdivided() {
+    // Regression: a region whose face normals all agree should NOT trigger
+    // the subdivision path.
+    let cfg = slicer_cfg();
+    let plan = plan(east_wall_intent(), one_drone(), &cfg).unwrap();
+    assert!(
+        !plan
+            .warnings
+            .iter()
+            .any(|w| w.code == PlanWarningCode::RegionSubdivided),
+        "planar region should not be subdivided, warnings: {:?}",
+        plan.warnings
+    );
+}
+
+#[test]
+#[allow(dead_code)]
+fn _silence_unused_plan_error_code_import() {
+    // PlanErrorCode is still used by other tests; this is a no-op kept here
+    // so removing it from the imports list later is a one-line change.
+    let _ = PlanErrorCode::NonPlanarRegion;
 }

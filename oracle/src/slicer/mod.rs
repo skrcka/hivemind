@@ -66,9 +66,11 @@ pub fn plan(
     let plan_id = PlanId::new();
     let now = OffsetDateTime::now_utc();
 
-    // 1. Coverage: regions → spray passes.
+    // 1. Coverage: regions → spray passes (auto-subdividing non-planar
+    //    regions by clustering face normals).
     let coverage_result = coverage::generate_passes(&intent, cfg);
     let mut errors: Vec<PlanError> = coverage_result.errors;
+    let mut coverage_warnings: Vec<PlanWarning> = coverage_result.warnings;
     let coverage_plan = coverage_result.coverage_plan;
     let passes = coverage_result.passes;
 
@@ -76,11 +78,10 @@ pub fn plan(
     //    pass to a lane and verify min separation; v1 just trusts the slicer
     //    to keep the single drone's passes sequential.
 
-    // 3. Sortie packing: bundle passes into sorties for the available drones.
-    //    For v1: one sortie per plan. If the fleet has zero drones, emit an
-    //    error (but still produce a plan).
-    let drone = fleet.drones.first().cloned();
-    if drone.is_none() {
+    // 3. Sortie packing: distribute passes across the available drones in
+    //    contiguous chunks. If the fleet has zero drones, emit an error
+    //    (but still produce a plan so the operator sees the geometry).
+    if fleet.drones.is_empty() {
         errors.push(PlanError {
             code: PlanErrorCode::NoDronesAvailable,
             message: "no drones in the fleet snapshot".into(),
@@ -88,11 +89,7 @@ pub fn plan(
         });
     }
 
-    let sorties_built = if let Some(d) = drone.as_ref() {
-        sortie_pack::pack(plan_id, d, &passes, cfg)
-    } else {
-        Vec::new()
-    };
+    let sorties_built = sortie_pack::pack(plan_id, &fleet.drones, &passes, cfg);
 
     // 4. Step assembly + 5. radio-loss policy stamping happens inside
     //    `steps::assemble` and `radio_loss::assign_defaults`.
@@ -109,8 +106,10 @@ pub fn plan(
     // 7. Resources.
     let resources = resources::estimate(&sorties, cfg);
 
-    // 8. Validation — non-fatal checks that produce warnings.
-    let warnings: Vec<PlanWarning> = validate::run(&schedule, &resources, cfg);
+    // 8. Validation — non-fatal checks that produce warnings. Coverage's
+    //    own warnings (e.g. region subdivision) are merged in.
+    let mut warnings: Vec<PlanWarning> = validate::run(&schedule, &resources, cfg);
+    warnings.append(&mut coverage_warnings);
 
     Ok(HivemindPlan {
         id: plan_id,

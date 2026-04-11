@@ -1,16 +1,19 @@
 //! Coverage stage: turn each region into a list of straight-line spray
 //! passes parallel to one principal axis of the region's bounding rectangle.
 //!
-//! v1 only handles flat or near-flat regions. A region is "near-flat" if
-//! every face's normal is within `cfg.planarity_tol_deg` of the region's
-//! average normal.
+//! Each input region must be near-planar — every face's normal within
+//! `cfg.planarity_tol_deg` of the region's average normal — to be planned as
+//! a single rectangle. **Non-planar regions are auto-subdivided** by
+//! clustering face normals into groups that each satisfy the planarity
+//! tolerance, and each cluster becomes its own sub-region for the rest of
+//! the slicer pipeline.
 
 use glam::Vec3;
 
 use crate::config::SlicerConfig;
 use crate::domain::{
-    intent::{Intent, MeshRegion},
-    plan::{CoveragePlan, PlanError, PlanErrorCode},
+    intent::{Face, Intent, MeshRegion},
+    plan::{CoveragePlan, PlanError, PlanErrorCode, PlanWarning, PlanWarningCode, PlanWarningSeverity},
 };
 
 use super::geometry;
@@ -39,21 +42,70 @@ impl SprayPass {
 pub struct CoverageResult {
     pub coverage_plan: CoveragePlan,
     pub passes: Vec<SprayPass>,
+    pub warnings: Vec<PlanWarning>,
     pub errors: Vec<PlanError>,
 }
 
 pub fn generate_passes(intent: &Intent, cfg: &SlicerConfig) -> CoverageResult {
     let mut passes = Vec::new();
+    let mut warnings = Vec::new();
     let mut errors = Vec::new();
     let mut total_area_m2 = 0.0_f64;
 
     for region in &intent.regions {
-        match passes_for_region(region, cfg) {
-            Ok(region_passes) => {
-                total_area_m2 += region.area_m2;
-                passes.extend(region_passes);
+        // 1. Try the region whole. If it's planar, plan it as one rectangle.
+        if is_planar(region, cfg) {
+            match passes_for_region(region, cfg) {
+                Ok(region_passes) => {
+                    total_area_m2 += region.area_m2;
+                    passes.extend(region_passes);
+                }
+                Err(e) => errors.push(e),
             }
-            Err(e) => errors.push(e),
+            continue;
+        }
+
+        // 2. Region is non-planar — cluster faces by normal direction.
+        let cluster_groups = cluster_faces_by_normal(&region.faces, cfg.planarity_tol_deg);
+
+        if cluster_groups.is_empty() {
+            errors.push(PlanError {
+                code: PlanErrorCode::NonPlanarRegion,
+                message: "non-planar region; clustering produced no sub-regions".into(),
+                region_id: Some(region.id.clone()),
+            });
+            continue;
+        }
+
+        warnings.push(PlanWarning {
+            severity: PlanWarningSeverity::Info,
+            code: PlanWarningCode::RegionSubdivided,
+            message: format!(
+                "region '{}' is non-planar; auto-split into {} planar sub-regions",
+                region.id,
+                cluster_groups.len()
+            ),
+        });
+
+        for (i, face_indices) in cluster_groups.iter().enumerate() {
+            let sub_faces: Vec<Face> =
+                face_indices.iter().map(|&idx| region.faces[idx].clone()).collect();
+            let sub_area_m2 = sub_faces.iter().map(triangle_area).sum::<f64>();
+            let sub_region = MeshRegion {
+                id: format!("{}__sub{i:02}", region.id),
+                name: format!("{} (sub {})", region.name, i + 1),
+                faces: sub_faces,
+                area_m2: sub_area_m2,
+                paint_spec: region.paint_spec.clone(),
+            };
+
+            match passes_for_region(&sub_region, cfg) {
+                Ok(sub_passes) => {
+                    total_area_m2 += sub_area_m2;
+                    passes.extend(sub_passes);
+                }
+                Err(e) => errors.push(e),
+            }
         }
     }
 
@@ -69,8 +121,109 @@ pub fn generate_passes(intent: &Intent, cfg: &SlicerConfig) -> CoverageResult {
     CoverageResult {
         coverage_plan,
         passes,
+        warnings,
         errors,
     }
+}
+
+/// Cheap planarity check: does every face's normal agree with the region's
+/// average normal within `cfg.planarity_tol_deg`?
+fn is_planar(region: &MeshRegion, cfg: &SlicerConfig) -> bool {
+    if region.faces.is_empty() {
+        return false;
+    }
+    let normals: Vec<Vec3> = region.faces.iter().map(face_normal_vec).collect();
+    let avg = geometry::average_normal(&normals);
+    if avg.length_squared() < 0.5 {
+        return false;
+    }
+    let cos_tol = cfg.planarity_tol_deg.to_radians().cos();
+    normals
+        .iter()
+        .all(|n| n.normalize_or_zero().dot(avg) >= cos_tol)
+}
+
+/// Greedy clustering of face normals. Each face joins the existing cluster
+/// whose running-average normal is within `tol_deg`; if none qualifies, the
+/// face spawns a new cluster. Returns one `Vec<usize>` per cluster
+/// containing indices into the original `faces` slice.
+///
+/// Deterministic given the same input order. O(n·k) where k is the number
+/// of clusters discovered.
+fn cluster_faces_by_normal(faces: &[Face], tol_deg: f32) -> Vec<Vec<usize>> {
+    let cos_tol = tol_deg.to_radians().cos();
+    let mut clusters: Vec<Cluster> = Vec::new();
+
+    for (idx, face) in faces.iter().enumerate() {
+        let n = face_normal_vec(face);
+        if n.length_squared() < 0.5 {
+            continue; // skip degenerate normals
+        }
+
+        // Pick the existing cluster with the highest dot-product agreement
+        // (most aligned), provided it clears the tolerance.
+        let mut best: Option<(usize, f32)> = None;
+        for (ci, cluster) in clusters.iter().enumerate() {
+            let dot = n.dot(cluster.centroid_normal);
+            if dot >= cos_tol && best.map_or(true, |(_, prev)| dot > prev) {
+                best = Some((ci, dot));
+            }
+        }
+
+        if let Some((ci, _)) = best {
+            clusters[ci].add(idx, n);
+        } else {
+            clusters.push(Cluster::new(idx, n));
+        }
+    }
+
+    clusters.into_iter().map(|c| c.face_indices).collect()
+}
+
+#[derive(Debug)]
+struct Cluster {
+    face_indices: Vec<usize>,
+    /// Running average of every member's normal, normalised.
+    centroid_normal: Vec3,
+}
+
+impl Cluster {
+    fn new(face_idx: usize, normal: Vec3) -> Self {
+        Self {
+            face_indices: vec![face_idx],
+            centroid_normal: normal,
+        }
+    }
+
+    fn add(&mut self, face_idx: usize, normal: Vec3) {
+        // Update centroid as a running average (weighted by member count).
+        #[allow(clippy::cast_precision_loss)]
+        let n = self.face_indices.len() as f32;
+        let updated = (self.centroid_normal * n + normal) / (n + 1.0);
+        self.centroid_normal = updated.normalize_or_zero();
+        self.face_indices.push(face_idx);
+    }
+}
+
+fn face_normal_vec(face: &Face) -> Vec3 {
+    #[allow(clippy::cast_possible_truncation)]
+    Vec3::new(
+        face.normal[0] as f32,
+        face.normal[1] as f32,
+        face.normal[2] as f32,
+    )
+}
+
+/// Geometric area of one triangular face — used to recompute area for
+/// auto-subdivided sub-regions, since the intent's `area_m2` is for the
+/// whole original region.
+fn triangle_area(face: &Face) -> f64 {
+    let v: [glam::DVec3; 3] = [
+        glam::DVec3::new(face.vertices[0][0], face.vertices[0][1], face.vertices[0][2]),
+        glam::DVec3::new(face.vertices[1][0], face.vertices[1][1], face.vertices[1][2]),
+        glam::DVec3::new(face.vertices[2][0], face.vertices[2][1], face.vertices[2][2]),
+    ];
+    0.5 * (v[1] - v[0]).cross(v[2] - v[0]).length()
 }
 
 fn passes_for_region(region: &MeshRegion, cfg: &SlicerConfig) -> Result<Vec<SprayPass>, PlanError> {
@@ -161,28 +314,43 @@ fn passes_for_region(region: &MeshRegion, cfg: &SlicerConfig) -> Result<Vec<Spra
         });
     }
 
-    // Centre the lattice on (v_min + step_v/2) so passes are inside the bbox.
     let mut passes = Vec::new();
-    let mut v = v_min + step_v / 2.0;
-    let mut alternate = false;
-    while v <= v_max - step_v / 2.0 + f32::EPSILON {
-        // Boustrophedon: alternate the direction of every other pass so the
-        // drone doesn't have to fly back to u_min between passes.
-        let (u_a, u_b) = if alternate {
-            (u_max, u_min)
-        } else {
-            (u_min, u_max)
-        };
-        let start = geometry::unproject(u_a, v, 0.0, centre, u_axis, v_axis, avg_normal);
-        let end = geometry::unproject(u_b, v, 0.0, centre, u_axis, v_axis, avg_normal);
+
+    if v_extent < step_v {
+        // Region is narrower than a single spray pass — emit one centred pass
+        // along u so the drone still covers it at all.
+        let v_centre = (v_min + v_max) / 2.0;
+        let start = geometry::unproject(u_min, v_centre, 0.0, centre, u_axis, v_axis, avg_normal);
+        let end = geometry::unproject(u_max, v_centre, 0.0, centre, u_axis, v_axis, avg_normal);
         passes.push(SprayPass {
             region_id: region.id.clone(),
             start_enu: start,
             end_enu: end,
             normal: avg_normal,
         });
-        v += step_v;
-        alternate = !alternate;
+    } else {
+        // Centre the lattice on (v_min + step_v/2) so passes are inside the
+        // bbox. Boustrophedon: alternate the direction of every other pass so
+        // the drone doesn't have to fly back to u_min between passes.
+        let mut v = v_min + step_v / 2.0;
+        let mut alternate = false;
+        while v <= v_max - step_v / 2.0 + f32::EPSILON {
+            let (u_a, u_b) = if alternate {
+                (u_max, u_min)
+            } else {
+                (u_min, u_max)
+            };
+            let start = geometry::unproject(u_a, v, 0.0, centre, u_axis, v_axis, avg_normal);
+            let end = geometry::unproject(u_b, v, 0.0, centre, u_axis, v_axis, avg_normal);
+            passes.push(SprayPass {
+                region_id: region.id.clone(),
+                start_enu: start,
+                end_enu: end,
+                normal: avg_normal,
+            });
+            v += step_v;
+            alternate = !alternate;
+        }
     }
 
     Ok(passes)
