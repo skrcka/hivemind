@@ -8,6 +8,9 @@ A human operator drives the system from a single control plane. They load a 3D s
 
 ## Submodules
 
+### BBC
+Servo-driven spray actuation mechanism concept using 3D-printed linkages and a controlled spray actuator. See `BBC/README.md`.
+
 ### pantheon
 Operator control plane. Long-term: Tauri + React desktop application. **v1: Blender + Skybrush Studio with custom Python plugins.**
 
