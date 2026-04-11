@@ -1,0 +1,217 @@
+:root {
+  --bg: #0b0e14;
+  --bg-panel: #11161f;
+  --bg-panel-hi: #182030;
+  --border: #1f2937;
+  --fg: #e6edf3;
+  --fg-muted: #8b9bb4;
+  --accent: #3b82f6;
+  --ok: #22c55e;
+  --warn: #facc15;
+  --bad: #ef4444;
+
+  color-scheme: dark;
+  font-family: -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ── Top bar ───────────────────────────────────────────────────── */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 20px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.topbar h1 {
+  font-size: 18px;
+  margin: 0;
+  letter-spacing: 1px;
+}
+.subtitle {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.status-badges {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.badge {
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  background: var(--bg-panel-hi);
+  border: 1px solid var(--border);
+}
+.badge-connected {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.badge-stale,
+.badge-connecting {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.badge-failed,
+.badge-disconnected {
+  color: var(--fg-muted);
+}
+
+/* ── HUD layout ────────────────────────────────────────────────── */
+
+.hud {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 280px 1fr 280px;
+  gap: 20px;
+  padding: 20px;
+}
+
+.hud-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.hud-col-center {
+  align-items: center;
+}
+
+/* ── Panels ────────────────────────────────────────────────────── */
+
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 16px;
+}
+
+.panel h3 {
+  margin: 0 0 10px 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--fg-muted);
+}
+
+.readout {
+  display: flex;
+  gap: 30px;
+  margin-top: 20px;
+  padding: 15px 30px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.readout-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.readout-item .label {
+  font-size: 10px;
+  color: var(--fg-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.readout-item .value {
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+/* ── Buttons ───────────────────────────────────────────────────── */
+
+button {
+  font-family: inherit;
+  font-size: 14px;
+  padding: 10px 18px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel-hi);
+  color: var(--fg);
+  cursor: pointer;
+  transition: background 120ms;
+}
+button:hover:not(:disabled) {
+  background: #1f293a;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.btn-danger {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: white;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* ── Arm-hold progress ring ───────────────────────────────────── */
+
+.arm-button {
+  position: relative;
+  width: 100%;
+  padding: 20px;
+  text-align: center;
+}
+.arm-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 4px;
+  background: var(--ok);
+  transition: width 50ms linear;
+}
+
+/* ── Pump indicator ───────────────────────────────────────────── */
+
+.pump-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pump-led {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--bg-panel-hi);
+  border: 1px solid var(--border);
+}
+.pump-led.on {
+  background: var(--bad);
+  box-shadow: 0 0 8px var(--bad);
+}

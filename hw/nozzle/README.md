@@ -114,56 +114,34 @@ Side view:
 
 ### Step 3 — Wire the servo
 
-Three wires from the servo. Two options.
-
-**Option A — to Pixhawk AUX (recommended):**
+Three wires from the servo. **One supported wiring: Pixhawk AUX5.**
 
 ```
-Servo wire          Pixhawk AUX port (any free one, e.g. AUX 5)
-─────────           ──────────────────────────────────────────
+Servo wire          Pixhawk AUX5 port
+─────────           ─────────────────
 Brown (GND)    →    GND pin
 Red   (VCC)    →    5 V pin (servo rail)
 Orange (SIG)   →    Signal pin
 ```
 
-Pixhawk drives the servo directly through PX4's actuator output. No relay, no MOSFET, no extra controller.
+Pixhawk drives the servo directly through PX4's actuator output. No relay, no MOSFET, no extra controller. Any free AUX output will work; AUX5 is the canonical choice and legion's config expects it.
 
-**Option B — to Raspberry Pi GPIO (simpler for early bench testing):**
-
-```
-Brown (GND)    →    Pi GND  (pin 6)
-Red   (VCC)    →    Pi 5 V  (pin 2)
-Orange (SIG)   →    Pi GPIO 18 (pin 12)
-```
-
-Use Option B while you're still figuring out timing on the bench, then move to Option A once you're flying — Pixhawk-driven outputs are deterministic and survive Pi reboots.
+Why not wire it to the Pi's GPIO instead? It was a tempting bench-test shortcut, but it splits the actuator story across two devices: the Pi handles the nozzle while the Pixhawk handles everything else (motors, ESCs, future AUX-mounted sensors). That means a Pi reboot drops the nozzle, the Pi's kernel-scheduled PWM jitters under load, and legion's code has to host two different control backends (one per wiring). AUX5 through the Pixhawk removes all of that — the servo is deterministic, reboot-safe, and on the same control path as every other actuator on the drone. legion targets this wiring exclusively.
 
 ## Software control
 
-### Option A — From Pixhawk via MAVLink (recommended)
+The legion agent on the Pi sends actuator commands to PX4 via its MAVLink driver (`rust-mavlink` over TELEM2). At the trait layer inside `legion-core` this is a single call on `MavlinkBackend`:
 
-The legion agent on the Pi sends actuator commands through MAVSDK:
-
-```python
-# Inside the legion agent on the Raspberry Pi
-
-async def spray_on(drone):
-    """Push nozzle down — start spraying."""
-    await drone.action.set_actuator(5, 1.0)   # AUX5, full position
-
-async def spray_off(drone):
-    """Release nozzle — stop spraying."""
-    await drone.action.set_actuator(5, 0.0)   # AUX5, zero position
-
-# During sortie execution:
-for waypoint in sortie["waypoints"]:
-    await fly_to(waypoint)
-
-    if waypoint["spray"]:
-        await spray_on(drone)
-    else:
-        await spray_off(drone)
+```rust
+// legion-core: executor step handler
+if step.spray {
+    mavlink.set_nozzle(true).await?;   // PX4 drives AUX5 to the "pressed" PWM
+}
+// ... fly the path ...
+mavlink.set_nozzle(false).await?;      // PX4 drives AUX5 to the "released" PWM
 ```
+
+The concrete `rust-mavlink` driver translates `set_nozzle(true/false)` into a `MAV_CMD_DO_SET_SERVO` message (servo index 5, PWM 2000/1000) — or, equivalently, a direct actuator-output override on AUX5. Both produce the same physical motion: the servo arm pushes or releases the spray-can nozzle.
 
 PX4 config (set once via QGroundControl parameters):
 
@@ -173,26 +151,7 @@ PWM_AUX_MIN5  = 1000
 PWM_AUX_MAX5  = 2000
 ```
 
-### Option B — Directly from Pi GPIO (simpler for testing)
-
-```python
-import pigpio
-import time
-
-pi = pigpio.pi()
-SERVO_PIN = 18
-
-def spray_on():
-    pi.set_servo_pulsewidth(SERVO_PIN, 2000)  # 180° → push nozzle
-
-def spray_off():
-    pi.set_servo_pulsewidth(SERVO_PIN, 1000)  # 0° → release nozzle
-
-# Bench test before flying:
-spray_on()
-time.sleep(3)   # spray for 3 seconds
-spray_off()
-```
+Because nozzle control lives behind the `MavlinkBackend` trait, the executor and the safety loop both command it through the same path: the executor toggles it at spray step boundaries, and the safety loop cuts it on any trip (ToF, battery, paint, oracle silent). There is no second control backend and no Pi GPIO PWM in the flight path.
 
 ## Testing procedure
 
@@ -202,12 +161,14 @@ Don't skip steps. Each builds confidence the next one is safe.
 
 ```
 1. Mount can + servo on a piece of wood
-2. Wire servo to Pi or Pixhawk
-3. Run spray_on()  → verify can sprays
-4. Run spray_off() → verify can stops
-5. Adjust servo arm position if it doesn't fully press
+2. Wire servo to Pixhawk AUX5
+3. Apply PX4 params (AUX5 function, PWM min/max)
+4. Toggle AUX5 from QGroundControl → Actuator Test
+5. Verify can sprays when AUX5 is at the "pressed" PWM,
+   stops when back to "released"
+6. Adjust servo arm position if it doesn't fully press
    or doesn't fully release the nozzle
-6. Run 50 on/off cycles to verify reliability
+7. Run 50 on/off cycles to verify reliability
 ```
 
 ### Step 2 — Ground test on drone (props off)
@@ -263,7 +224,7 @@ Total swap time: **~15 s**.
 |---|---|
 | Spray medium | Standard 400 ml aerosol spray paint |
 | Actuation | SG90 servo, 180° positional, 9 g |
-| Control | Pixhawk AUX PWM (preferred) or Pi GPIO |
+| Control | Pixhawk AUX5 PWM, driven by legion via MAVLink |
 | Force on nozzle | ~1.2 kgf (10 mm arm at 4.8 V) |
 | Response time | ~0.12 s full travel |
 | Mechanism weight | ~20 g (servo + bracket + clamp) |

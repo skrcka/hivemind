@@ -1,9 +1,14 @@
 [workspace]
 resolver = "2"
 members = ["protocol", "legion-core", "legion"]
-# `oracle` is intentionally excluded from the workspace until its src/
-# tree lands; its Cargo.toml is present but has no bin path yet.
-exclude = ["oracle"]
+# Both of these are intentionally excluded from the workspace:
+#
+# - `oracle` until its src/ tree lands; its Cargo.toml is present but has
+#   no bin path yet.
+# - `praetor` because it pulls the Tauri / wry / webkit transitive tree
+#   which we don't want slowing down `cargo check` on workspace-only builds.
+#   Praetor has its own Cargo.lock and target/ next to its Cargo.toml.
+exclude = ["oracle", "praetor"]
 
 [workspace.package]
 edition = "2021"

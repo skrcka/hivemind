@@ -20,6 +20,9 @@ struct State {
     battery_pct: f32,
     armed: bool,
     in_air: bool,
+    /// Software model of the AUX5 nozzle servo. `true` = pressed
+    /// (spray on), `false` = released (spray off).
+    nozzle_open: bool,
 }
 
 impl Default for State {
@@ -33,6 +36,7 @@ impl Default for State {
             battery_pct: 95.0,
             armed: false,
             in_air: false,
+            nozzle_open: false,
         }
     }
 }
@@ -160,6 +164,12 @@ impl MavlinkBackend for StubMavlinkDriver {
 
     async fn inject_rtk(&self, rtcm: &[u8]) -> Result<(), MavlinkError> {
         tracing::debug!("stub mavlink: inject_rtk ({} bytes)", rtcm.len());
+        Ok(())
+    }
+
+    async fn set_nozzle(&self, open: bool) -> Result<(), MavlinkError> {
+        tracing::info!("stub mavlink: set_nozzle({open}) [AUX5 servo]");
+        self.state.lock().unwrap().nozzle_open = open;
         Ok(())
     }
 

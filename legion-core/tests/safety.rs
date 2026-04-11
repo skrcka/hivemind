@@ -7,11 +7,10 @@
 
 mod common;
 
-use common::{FakeClock, MockMavlink, MockPayload, MockPaintLevel, MockTof};
+use common::{FakeClock, MavCall, MockMavlink, MockPaintLevel, MockPayload, MockTof};
 use legion_core::safety::check::safety_check;
 use legion_core::safety::{SafetyConfig, SafetyOutcome, SafetyState};
-use legion_core::traits::Pump;
-use legion_core::{Clock, LegionState};
+use legion_core::{Clock, LegionState, MavlinkBackend};
 
 #[tokio::test]
 async fn ok_when_everything_healthy() {
@@ -28,11 +27,12 @@ async fn ok_when_everything_healthy() {
 }
 
 #[tokio::test]
-async fn trips_tof_avoidance_and_cuts_pump() {
+async fn trips_tof_avoidance_and_cuts_nozzle() {
     let mut payload = MockPayload::healthy();
     payload.tof = MockTof::new([20.0]); // below the 30 cm default
-    payload.pump.on = true; // pretend the executor has the pump on
     let mavlink = MockMavlink::new();
+    // Pretend the executor had the nozzle open.
+    mavlink.set_nozzle(true).await.unwrap();
     mavlink.set_battery(80.0);
     let clock = FakeClock::new();
     let mut state = LegionState::new("drone-01");
@@ -49,13 +49,16 @@ async fn trips_tof_avoidance_and_cuts_pump() {
         _ => panic!("expected TofAvoidance, got {outcome:?}"),
     }
 
-    // Pump was cut, emergency_pullback was called.
-    assert!(!payload.pump.is_on());
-    use common::MavCall;
+    // Nozzle was cut, emergency_pullback was called.
+    assert!(!mavlink.is_nozzle_open());
     assert!(mavlink
         .call_log()
         .iter()
         .any(|c| matches!(c, MavCall::EmergencyPullback)));
+    assert!(mavlink
+        .call_log()
+        .iter()
+        .any(|c| matches!(c, MavCall::SetNozzle(false))));
 }
 
 #[tokio::test]
@@ -77,6 +80,15 @@ async fn trips_battery_critical_and_rtls() {
         }
         _ => panic!("expected BatteryCritical, got {outcome:?}"),
     }
+
+    assert!(mavlink
+        .call_log()
+        .iter()
+        .any(|c| matches!(c, MavCall::SetNozzle(false))));
+    assert!(mavlink
+        .call_log()
+        .iter()
+        .any(|c| matches!(c, MavCall::Rtl)));
 }
 
 #[tokio::test]
@@ -102,10 +114,10 @@ async fn trips_paint_empty_and_rtls() {
 }
 
 #[tokio::test]
-async fn trips_oracle_silent_and_cuts_pump_only() {
+async fn trips_oracle_silent_and_cuts_nozzle_only() {
     let mut payload = MockPayload::healthy();
-    payload.pump.on = true;
     let mavlink = MockMavlink::new();
+    mavlink.set_nozzle(true).await.unwrap();
     mavlink.set_battery(80.0);
     let clock = FakeClock::new();
     clock.set_ms(10_000);
@@ -120,15 +132,14 @@ async fn trips_oracle_silent_and_cuts_pump_only() {
     match outcome {
         SafetyOutcome::Tripped { state, action } => {
             assert!(matches!(state, SafetyState::OracleSilent { .. }));
-            assert_eq!(action, "pump_off");
+            assert_eq!(action, "nozzle_off");
         }
         _ => panic!("expected OracleSilent, got {outcome:?}"),
     }
 
-    // Pump was cut, but no flight command issued — that's the
+    // Nozzle was cut, but no flight command issued — that's the
     // executor's problem, not safety's.
-    assert!(!payload.pump.is_on());
-    use common::MavCall;
+    assert!(!mavlink.is_nozzle_open());
     assert!(!mavlink
         .call_log()
         .iter()

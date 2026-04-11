@@ -27,7 +27,7 @@ use crate::executor::{radio_loss, steps};
 use crate::state::LegionState;
 use crate::traits::link::ExecutorEvent;
 use crate::traits::store::SortieProgress;
-use crate::traits::{Clock, Link, MavlinkBackend, Payload, Pump, SortieStore};
+use crate::traits::{Clock, Link, MavlinkBackend, Payload, SortieStore};
 use hivemind_protocol::{DronePhase, LegionToOracle, Sortie, SortieStep};
 
 /// Stateless executor entry point. All state is passed in per call.
@@ -73,11 +73,11 @@ impl Executor {
                     return finalize_after_policy(result, state);
                 }
                 ProceedOutcome::AbortedByOracle { reason } => {
-                    abort_sortie(&sortie, step, payload, mavlink, link, state, &reason).await?;
+                    abort_sortie(&sortie, step, mavlink, link, state, &reason).await?;
                     return Err(CoreError::AbortedByOracle { reason });
                 }
                 ProceedOutcome::RtlByOracle { reason } => {
-                    rtl_sortie(&sortie, step, payload, mavlink, link, state, &reason).await?;
+                    rtl_sortie(&sortie, step, mavlink, link, state, &reason).await?;
                     return Err(CoreError::RtlByOracle { reason });
                 }
                 ProceedOutcome::Cancelled => {
@@ -255,21 +255,19 @@ fn finalize_after_policy(
     Ok(())
 }
 
-async fn abort_sortie<P, M, L>(
+async fn abort_sortie<M, L>(
     sortie: &Sortie,
     step: &SortieStep,
-    payload: &mut P,
     mavlink: &M,
     link: &mut L,
     state: &mut LegionState,
     reason: &str,
 ) -> Result<(), CoreError>
 where
-    P: Payload,
     M: MavlinkBackend,
     L: Link,
 {
-    let _ = payload.pump().off().await;
+    let _ = mavlink.set_nozzle(false).await;
     let _ = mavlink.return_to_launch().await;
     link.send(LegionToOracle::SortieFailed {
         sortie_id: sortie.sortie_id.clone(),
@@ -282,21 +280,19 @@ where
     Ok(())
 }
 
-async fn rtl_sortie<P, M, L>(
+async fn rtl_sortie<M, L>(
     sortie: &Sortie,
     step: &SortieStep,
-    payload: &mut P,
     mavlink: &M,
     link: &mut L,
     state: &mut LegionState,
     reason: &str,
 ) -> Result<(), CoreError>
 where
-    P: Payload,
     M: MavlinkBackend,
     L: Link,
 {
-    let _ = payload.pump().off().await;
+    let _ = mavlink.set_nozzle(false).await;
     mavlink.return_to_launch().await?;
     link.send(LegionToOracle::SortieFailed {
         sortie_id: sortie.sortie_id.clone(),

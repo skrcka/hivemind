@@ -1,57 +1,17 @@
 //! Software-only payload implementation. Used on dev machines, in
-//! SITL, and for unit tests. Tracks software state only — no hardware
-//! I/O.
+//! SITL, and for unit tests. Tracks software sensor state only — no
+//! hardware I/O.
 //!
-//! Sensor readings are "healthy by default": ToF reports a safe 150 cm
-//! distance, paint level reports a full 500 ml tank. The `legion
-//! debug` subcommands can nudge these values for scripted tests.
+//! v1 payload is only two sensors: the forward ToF (healthy default
+//! 150 cm) and paint level (reports `NotInstalled` so the safety
+//! check's paint-empty branch is skipped — v1 has no HX711 load cell,
+//! see `hw/nozzle/README.md`). The nozzle is a Pixhawk AUX5 actuator
+//! and lives on `MavlinkBackend::set_nozzle`, not here.
 
 use std::sync::{Arc, Mutex};
 
 use legion_core::error::PayloadError;
-use legion_core::{Nozzle, PaintLevel, Payload, Pump, Tof};
-
-#[derive(Debug, Default)]
-pub struct MockPump {
-    pub on: bool,
-}
-
-impl Pump for MockPump {
-    async fn on(&mut self) -> Result<(), PayloadError> {
-        tracing::debug!("mock pump: on");
-        self.on = true;
-        Ok(())
-    }
-    async fn off(&mut self) -> Result<(), PayloadError> {
-        tracing::debug!("mock pump: off");
-        self.on = false;
-        Ok(())
-    }
-    fn is_on(&self) -> bool {
-        self.on
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct MockNozzle {
-    pub open: bool,
-}
-
-impl Nozzle for MockNozzle {
-    async fn open(&mut self) -> Result<(), PayloadError> {
-        tracing::debug!("mock nozzle: open");
-        self.open = true;
-        Ok(())
-    }
-    async fn close(&mut self) -> Result<(), PayloadError> {
-        tracing::debug!("mock nozzle: close");
-        self.open = false;
-        Ok(())
-    }
-    fn is_open(&self) -> bool {
-        self.open
-    }
-}
+use legion_core::{PaintLevel, Payload, Tof};
 
 /// ToF with a settable current reading. The safety-loop integration
 /// tests flip this under the threshold to drive a trip.
@@ -83,40 +43,26 @@ impl Tof for MockTof {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct MockPaintLevel {
-    current: Arc<Mutex<f32>>,
-}
+/// v1 paint-level sensor: always `NotInstalled`. v1 has no HX711
+/// load cell; the operator counts seconds and swaps cans manually.
+/// The trait impl is still required because the safety check reads
+/// through it, but the impl returns `NotInstalled` so the check is
+/// skipped.
+#[derive(Debug, Default, Clone)]
+pub struct NotInstalledPaintLevel;
 
-impl MockPaintLevel {
-    pub fn new_at(ml: f32) -> Self {
-        Self {
-            current: Arc::new(Mutex::new(ml)),
-        }
-    }
-    pub fn set(&self, ml: f32) {
-        *self.current.lock().unwrap() = ml;
-    }
-}
-
-impl Default for MockPaintLevel {
-    fn default() -> Self {
-        Self::new_at(500.0)
-    }
-}
-
-impl PaintLevel for MockPaintLevel {
+impl PaintLevel for NotInstalledPaintLevel {
     async fn read_ml(&mut self) -> Result<f32, PayloadError> {
-        Ok(*self.current.lock().unwrap())
+        Err(PayloadError::NotInstalled)
     }
 }
 
-/// Bundle of the four mock sub-devices.
+/// Bundle of the v1 payload sub-devices. Nozzle is **not** here —
+/// it's a Pixhawk AUX5 actuator, driven via `MavlinkBackend`.
+#[derive(Default)]
 pub struct MockPayload {
-    pub pump: MockPump,
-    pub nozzle: MockNozzle,
     pub tof: MockTof,
-    pub paint_level: MockPaintLevel,
+    pub paint_level: NotInstalledPaintLevel,
 }
 
 impl MockPayload {
@@ -125,29 +71,10 @@ impl MockPayload {
     }
 }
 
-impl Default for MockPayload {
-    fn default() -> Self {
-        Self {
-            pump: MockPump::default(),
-            nozzle: MockNozzle::default(),
-            tof: MockTof::default(),
-            paint_level: MockPaintLevel::default(),
-        }
-    }
-}
-
 impl Payload for MockPayload {
-    type Pump = MockPump;
-    type Nozzle = MockNozzle;
     type Tof = MockTof;
-    type PaintLevel = MockPaintLevel;
+    type PaintLevel = NotInstalledPaintLevel;
 
-    fn pump(&mut self) -> &mut Self::Pump {
-        &mut self.pump
-    }
-    fn nozzle(&mut self) -> &mut Self::Nozzle {
-        &mut self.nozzle
-    }
     fn tof(&mut self) -> &mut Self::Tof {
         &mut self.tof
     }

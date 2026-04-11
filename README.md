@@ -45,6 +45,11 @@ Oracle is the bridge between pantheon (intent) and legion (execution). It handle
 ### hw
 Hardware specification — frames, flight controllers, payloads, ground station, RTK, refill. Split by phase: [hw/v1](hw/v1/README.md) (~€746, one drone, prove the pipeline) and [hw/v2](hw/v2/README.md) (~€13K, 10-drone production system on a truck). Two swappable payload modules on the same drone: [hw/nozzle](hw/nozzle/README.md) (paint — v1's SG90 servo pressing a standard aerosol can, ~€10) and [hw/wash](hw/wash/README.md) (pressure-wash with a 64 mm EDF counter-thrust fan that cancels the wash nozzle's reaction force, ~€50 add-on, designed for v2). Index in [hw/README.md](hw/README.md).
 
+### praetor
+Direct manual-control client for one drone at a time. Tauri desktop app (Rust backend + React frontend). Takes Xbox controller input and drives the drone's Pixhawk directly over MAVLink — completely independent of oracle, legion, and pantheon.
+
+Praetor is the **independent backup channel** described in [legion/README.md](legion/README.md): a parallel MAVLink link to the Pixhawk's TELEM1 port (via a second SiK radio) that keeps working when oracle or legion are dead, and gives the operator a manual override path over the normal plan/apply lifecycle. It exists for three scenarios: something went wrong and the drone needs to come home; a dev is bench-testing the spray pump or a new airframe without spinning up the whole stack; or a brand-new drone needs its first manual flights to tune PIDs before it's ever run a sortie. See [praetor/README.md](praetor/README.md).
+
 ## Data flow
 
 ```

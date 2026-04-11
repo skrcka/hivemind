@@ -2,10 +2,15 @@
 //! by the hosting binary's wrapper.
 //!
 //! The function is pure aside from the side effects of the hardware
-//! trait calls it makes (cutting the pump, sending `emergency_pullback`,
-//! reading sensors). It returns a [`SafetyOutcome`] describing what
-//! happened; the binary turns that into a `SafetyState` on the watch
-//! channel and into a `SafetyEvent` frame out to oracle.
+//! trait calls it makes (cutting the nozzle, commanding
+//! `emergency_pullback`, reading sensors). It returns a
+//! [`SafetyOutcome`] describing what happened; the binary turns that
+//! into a `SafetyState` on the watch channel and into a
+//! `SafetyEvent` frame out to oracle.
+//!
+//! Spray is cut through `MavlinkBackend::set_nozzle(false)` because
+//! the v1 nozzle is a Pixhawk AUX5 actuator — see
+//! `hw/nozzle/README.md` and `legion/README.md`.
 
 use alloc::string::String;
 use alloc::string::ToString;
@@ -13,7 +18,7 @@ use alloc::string::ToString;
 use crate::error::PayloadError;
 use crate::safety::{SafetyConfig, SafetyState};
 use crate::state::LegionState;
-use crate::traits::{Clock, MavlinkBackend, PaintLevel, Payload, Pump, Tof};
+use crate::traits::{Clock, MavlinkBackend, PaintLevel, Payload, Tof};
 
 /// What the single-tick check decided.
 #[derive(Debug, Clone, PartialEq)]
@@ -21,8 +26,8 @@ pub enum SafetyOutcome {
     /// Nothing to do this tick.
     Ok,
     /// A trip occurred. The corresponding side effects have already been
-    /// issued to the hardware (pump off, emergency pullback, RTL, etc.);
-    /// the caller should publish the new state and emit a
+    /// issued to the hardware (nozzle closed, emergency pullback, RTL,
+    /// etc.); the caller should publish the new state and emit a
     /// `SafetyEvent` to oracle.
     Tripped {
         state: SafetyState,
@@ -42,9 +47,12 @@ impl SafetyOutcome {
 ///
 /// Priority order (first hit wins): ToF → battery → paint → oracle silent.
 /// The caller is expected to feed `state` with fresh values for
-/// `battery_pct`, `paint_remaining_ml`, and `last_oracle_contact_ms`
-/// before calling — the check reads sensors directly only for ToF and
-/// paint, since battery comes from the MAVLink decoder upstream.
+/// `battery_pct` and `last_oracle_contact_ms` before calling — the
+/// check reads sensors directly only for ToF and paint, since battery
+/// comes from the MAVLink decoder upstream.
+///
+/// If the `PaintLevel` sub-device reports `NotInstalled` (v1 with no
+/// load cell), the paint-empty check is silently skipped.
 pub async fn safety_check<P, M, C>(
     payload: &mut P,
     mavlink: &M,
@@ -62,7 +70,7 @@ where
         Ok(tof) => {
             state.tof_distance_cm = Some(tof);
             if tof < cfg.tof_min_cm {
-                let _ = payload.pump().off().await;
+                let _ = mavlink.set_nozzle(false).await;
                 let _ = mavlink.emergency_pullback().await;
                 return SafetyOutcome::tripped(
                     SafetyState::TofAvoidance { tof_cm: tof },
@@ -88,7 +96,7 @@ where
     let battery = mavlink.battery_pct();
     state.battery_pct = battery;
     if battery > 0.0 && battery < cfg.battery_critical_pct {
-        let _ = payload.pump().off().await;
+        let _ = mavlink.set_nozzle(false).await;
         let _ = mavlink.return_to_launch().await;
         return SafetyOutcome::tripped(
             SafetyState::BatteryCritical {
@@ -103,7 +111,7 @@ where
         Ok(paint) => {
             state.paint_remaining_ml = paint;
             if paint < cfg.paint_empty_ml {
-                let _ = payload.pump().off().await;
+                let _ = mavlink.set_nozzle(false).await;
                 let _ = mavlink.return_to_launch().await;
                 return SafetyOutcome::tripped(
                     SafetyState::PaintEmpty { paint_ml: paint },
@@ -122,16 +130,16 @@ where
         }
     }
 
-    // 4. Oracle silent. Cut the pump only — the executor's per-step
+    // 4. Oracle silent. Cut the nozzle only — the executor's per-step
     //    radio-loss policy decides the flight outcome.
     let silence = clock.elapsed_ms(state.last_oracle_contact_ms);
     if silence > cfg.oracle_silent_ms {
-        let _ = payload.pump().off().await;
+        let _ = mavlink.set_nozzle(false).await;
         return SafetyOutcome::tripped(
             SafetyState::OracleSilent {
                 silence_ms: silence,
             },
-            "pump_off",
+            "nozzle_off",
         );
     }
 
@@ -159,8 +167,6 @@ pub fn outbound_event_fields(
 }
 
 fn fmt_tof(cm: f32) -> String {
-    // Manual rather than `format!` because no_std + alloc lacks `format!`
-    // on older toolchains. We do have it on 1.75+; using it is fine.
     alloc::format!("tof={cm:.0}cm")
 }
 

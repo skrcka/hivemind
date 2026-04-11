@@ -69,6 +69,23 @@ pub trait MavlinkBackend: Send + Sync {
         rtcm: &[u8],
     ) -> impl Future<Output = Result<(), MavlinkError>> + Send;
 
+    /// Command the nozzle servo. `true` = pressed (spray on),
+    /// `false` = released (spray off).
+    ///
+    /// v1 wiring: the SG90 sits on Pixhawk AUX5 (see
+    /// `hw/nozzle/README.md`). The impl maps to a
+    /// `MAV_CMD_DO_SET_SERVO` for servo index 5 with PWM 2000/1000,
+    /// or to an AUX5 actuator-output override, per PX4's parameter
+    /// setup.
+    ///
+    /// This method is `&self` so the safety loop and the executor
+    /// can both call it concurrently — the driver serializes at
+    /// its own interior-mutability layer.
+    fn set_nozzle(
+        &self,
+        open: bool,
+    ) -> impl Future<Output = Result<(), MavlinkError>> + Send;
+
     /// Latest decoded global position. Cached by the driver's telemetry
     /// decoder; never blocks.
     fn position(&self) -> Position;

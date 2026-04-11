@@ -21,5 +21,5 @@ pub mod store;
 pub use clock::Clock;
 pub use link::Link;
 pub use mavlink::MavlinkBackend;
-pub use payload::{Nozzle, PaintLevel, Payload, Pump, Tof};
+pub use payload::{PaintLevel, Payload, Tof};
 pub use store::SortieStore;

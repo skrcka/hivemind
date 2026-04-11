@@ -15,7 +15,8 @@ Concretely, legion:
 - Executes them step by step, requesting `Proceed` from oracle between every step.
 - Falls back to a per-step *radio loss policy* if oracle stops answering mid-step.
 - Drives PX4 via `rust-mavlink` over the Pixhawk's TELEM2 UART.
-- Owns the spray pump, nozzle servo, ToF sensor, and paint level sensor — hardware the autopilot doesn't see.
+- **Commands the nozzle servo via MAVLink to Pixhawk AUX5** (not a Pi-side actuator — see [hw/nozzle](../../hw/nozzle/README.md) and the [Nozzle control section](#nozzle-control--pixhawk-aux5-via-mavlink) below). The "spray on/off" operation is one `MavlinkBackend::set_nozzle` call.
+- Owns the forward ToF sensor (wired to the Pi's I²C — hardware the Pixhawk doesn't see).
 - Runs a 10 Hz local safety loop that preempts the executor if anything goes wrong.
 - Streams telemetry back to oracle at 2 Hz.
 
@@ -26,7 +27,8 @@ The clean responsibility split:
 | Plan / schedule / deconflict the swarm | **oracle** |
 | Approve plans, gate step transitions | **oracle** + operator (via pantheon) |
 | Execute one drone's sortie step by step | **legion** |
-| Spray pump, nozzle, ToF, paint sensor | **legion** |
+| Forward ToF sensor (Pi I²C) | **legion** |
+| Nozzle servo (Pixhawk AUX5) | **PX4**, commanded by legion via MAVLink |
 | Local safety loop (ToF, battery, paint, oracle watchdog) | **legion** |
 | Stabilisation, motor mixing, waypoint following | **PX4** |
 | MAVLink, the wire | **legion ↔ PX4 only** |
@@ -67,31 +69,30 @@ The oracle ↔ legion link is **not** MAVLink — see ["Why not MAVLink for this
    │  │            Pi 5  (legion)            │        │
    │  │                                      │        │
    │  │  ┌─────────┐    I²C    ┌──────────┐  │        │
-   │  │  │         ├───────────│ ToF      │  │        │
-   │  │  │         │           └──────────┘  │        │
-   │  │  │ payload │   GPIO    ┌──────────┐  │        │
-   │  │  │ drivers ├───────────│pump relay│  │        │
+   │  │  │ ToF     ├───────────│ VL53L1X  │  │        │
+   │  │  │ driver  │           │ (fwd ToF)│  │        │
    │  │  │ (rppal) │           └──────────┘  │        │
-   │  │  │         │   PWM     ┌──────────┐  │        │
-   │  │  │         ├───────────│  servo   │  │        │
-   │  │  │         │           └──────────┘  │        │
-   │  │  │         │   SPI/ADC ┌──────────┐  │        │
-   │  │  │         ├───────────│paint lvl │  │        │
-   │  │  └─────────┘           └──────────┘  │        │
+   │  │  └─────────┘                         │        │
    │  │                                      │        │
    │  │  ┌─────────┐   UART    ┌──────────┐  │        │
    │  │  │ rust-   ├───────────│  Pixhawk │  │        │
-   │  │  │ mavlink │  TELEM2   │  (PX4)   │  │        │
-   │  │  └─────────┘           └────┬─────┘  │        │
-   │  └─────────────────────────────┼────────┘        │
-   │                                │                 │
-   │                                │ ESC bus         │
-   │                                ▼                 │
-   │                          ┌──────────┐            │
-   │                          │  motors  │            │
-   │                          └──────────┘            │
-   │  Drone N                                         │
-   └──────────────────────────────────────────────────┘
+   │  │  │ mavlink │  TELEM2   │   (PX4)  │  │        │
+   │  │  └─────────┘           │          │  │        │
+   │  └────────────────────────┤          │  │        │
+   │                           │  AUX5 ───┼──┼──┐     │
+   │                           └────┬─────┘  │  │     │
+   │                                │        │  ▼     │
+   │                                │ ESC    │ ┌────┐ │
+   │                                │ bus    │ │SG90│ │
+   │                                ▼        │ │servo│ │
+   │                          ┌──────────┐   │ └─┬──┘ │
+   │                          │  motors  │   │   ▼    │
+   │                          └──────────┘   │ ┌────┐ │
+   │                                         │ │spray│ │
+   │                                         │ │ can │ │
+   │                                         │ └────┘ │
+   │  Drone N                                │        │
+   └─────────────────────────────────────────┴────────┘
 
    Optional independent backup channel (parallel, not part of legion or oracle):
 
@@ -106,7 +107,7 @@ Things to notice:
 1. **The radio is a serial UART, not a network.** v1 ships with EU-legal SiK-class telemetry radios — the **HolyBro SiK Telemetry Radio V3 (433 MHz EU variant)** for the cheap v1 budget, with **RFDesign RFD868x** as the v2 production target running in the 869.4–869.65 MHz SRD-d sub-band (the EU slot designed for high-power short-range telemetry, 500 mW EIRP, 10% duty cycle). Both run the SiK firmware family and look like `/dev/ttyUSB0` on the truck and a UART on the Pi. There is no IP layer, no TCP, no WebSocket. Our wire protocol runs as binary frames directly on top of the radio's serial byte stream. **No 915 MHz hardware** — that's US/Canada-only and illegal to operate in the EU.
 2. **Two MAVLink consumers of the same Pixhawk are possible.** v1 uses TELEM2 for legion (UART, low latency, no contention). An optional second SiK on TELEM1 can connect to QGroundControl on the truck for an *independent* monitoring/manual-override channel — plumbed at the hardware layer, not in legion or oracle.
 3. **Legion never talks MAVLink to anything other than its own Pixhawk.** No mavlink-router, no fan-out, no shared MAVLink session with oracle. The radio carries our protocol, not MAVLink.
-4. **Hardware that's not on the autopilot lives on legion.** The Pixhawk doesn't know about the spray pump, the nozzle servo, the ToF sensor, or the paint level sensor — those are wired to the Pi's GPIO/I²C/PWM and driven by legion via `rppal`.
+4. **Hardware that the Pixhawk doesn't see lives on legion.** For v1 that's the forward ToF sensor (VL53L1X, wired to the Pi's I²C and driven by legion via `rppal`). The **nozzle servo is a Pixhawk actuator** on AUX5 — legion commands it by sending MAVLink `MAV_CMD_DO_SET_SERVO` over TELEM2, not by toggling a Pi GPIO. See [hw/nozzle](../../hw/nozzle/README.md) and the [Nozzle control section](#nozzle-control--pixhawk-aux5-via-mavlink) below for why.
 
 ## Why not MAVLink for the oracle ↔ legion link
 
@@ -126,6 +127,35 @@ The cost of using MAVLink for this is the wrong abstraction at every step; the c
 
 **MAVLink stays where it belongs:** between legion and the Pixhawk (UART, on the same drone, never on the radio).
 
+## Nozzle control — Pixhawk AUX5 via MAVLink
+
+The v1 spray mechanism is an SG90 servo pressing a standard aerosol can's nozzle button — full build doc in [hw/nozzle](../../hw/nozzle/README.md). The servo is wired to **Pixhawk AUX5**, not to a Pi GPIO. legion commands it via MAVLink (`MAV_CMD_DO_SET_SERVO` on servo index 5, PWM 2000/1000), the same way it commands any other Pixhawk actuator.
+
+Why AUX5 and not Pi GPIO:
+
+- **Single control path.** Every actuator on the drone (motors, ESCs, the nozzle servo, any future gimbal) lives on the flight controller. Adding a second control path (Pi PWM for the nozzle, Pixhawk PWM for everything else) would mean legion has two kinds of drivers and two kinds of failure modes for one drone.
+- **Deterministic timing.** PX4's PWM output is generated on the flight controller's hardware timers. Pi-side software PWM through rppal is kernel-scheduled and jitters under load.
+- **Reboot safety.** A Pi reboot mid-sortie must not change the nozzle position. Pixhawk-driven outputs stay latched at their last commanded PWM.
+- **Failsafe coupling.** PX4's existing failsafe logic (battery, GPS loss, RC loss) can already force AUX5 to a safe position. Pi GPIO wouldn't inherit that.
+
+So legion's `MavlinkBackend` trait has a single `set_nozzle(open: bool)` method, and that's the *only* way spray is commanded anywhere in the codebase — the executor calls it at spray-step boundaries, the safety loop calls it on any trip, and the radio-loss policy calls it before unwinding. There is no Pi-side `Pump` or `Nozzle` trait.
+
+```rust
+// Every spray call in legion-core funnels through this one method.
+mavlink.set_nozzle(true).await?;   // AUX5 → PWM 2000 → servo pressed → spray on
+mavlink.set_nozzle(false).await?;  // AUX5 → PWM 1000 → servo released → spray off
+```
+
+PX4 parameters (set once via QGroundControl):
+
+```
+AUX5 function = "Servo"
+PWM_AUX_MIN5  = 1000
+PWM_AUX_MAX5  = 2000
+```
+
+`hw/nozzle/README.md` is the canonical reference for the wiring (3 wires: GND / 5 V / signal), the mounting, the testing procedure, and the PX4 params. legion's `MavlinkBackend` impl is the only code that touches the actuator command.
+
 ## Stack at a glance
 
 | Concern | Choice | Why |
@@ -136,14 +166,14 @@ The cost of using MAVLink for this is the wrong abstraction at every step; the c
 | Drone link to oracle | **`hivemind-protocol`** crate (shared workspace member) | Defines all message types, the `Transport` trait, and the postcard+COBS framing. Legion implements the client side; oracle implements the server side. Same bytes on the wire. |
 | Wire format | **postcard** (binary, serde-driven) + **COBS** framing | Postcard is the de-facto compact binary format for embedded Rust. COBS gives self-synchronising frame boundaries on a serial byte stream — a single byte loss only loses one frame, not the whole stream. Both transports (serial + TCP) use the same bytes. |
 | Radio transport | **`tokio-serial`** for v1/v2 SiK-class radios (HolyBro SiK 433 MHz for v1, RFD868x for v2); **plain `tokio::net::TcpStream`** swappable for SITL / dev / IP-based future radios | Both back the same `Transport` trait. v1 + v2 production hardware is serial; the TCP impl exists for tests, SITL, and the eventual IP-radio option. **EU-legal frequencies only** — no 915 MHz parts. |
-| GPIO / I²C / PWM / SPI | **`rppal`** | Pure-Rust Pi peripheral library. Supports GPIO, I²C, SPI, PWM on Pi 5. Async-friendly when blocking calls are wrapped in `spawn_blocking`. |
+| Pi peripherals (I²C for the ToF sensor) | **`rppal`** | Pure-Rust Pi peripheral library. v1 only uses it for the forward VL53L1X over I²C; the nozzle servo lives on Pixhawk AUX5, not on Pi GPIO, so there is no Pi-side PWM in the flight path. Async-friendly when blocking calls are wrapped in `spawn_blocking`. |
 | Persistence | **`serde_json` + atomic file writes** in `/var/lib/legion/` | One file per sortie, atomic via `tempfile + std::fs::rename`. SQLite would be overkill — we have at most a handful of sortie files at a time. |
 | Logging | **tracing + tracing-journald** | Same as oracle. Structured spans, journald output, post-job export. |
 | Process supervisor | **systemd unit** | Legion runs as a system service on the Pi (`legion.service`). Auto-restart on crash, journald logs shipped off the drone post-job. |
 | Errors | **`thiserror`** in modules, **`anyhow`** at the binary edge | Same split as oracle. |
 | Time / IDs | **`time`** + **`uuid` v7** | Sortable IDs, no `chrono` cve churn. Same as oracle. |
 | Config | **`figment`** (TOML + env overlays) | Same as oracle. |
-| Tests | **`cargo test`**, **`tokio::test`** for async cases, hardware-trait mocks for payload + MAVLink, **PX4 SITL** as a nightly gate | Pure-Rust test stack. Hardware mocks are trait impls; the executor unit-tests against fakes in milliseconds. |
+| Tests | **`cargo test`**, **`tokio::test`** for async cases, mock `Payload` + `MavlinkBackend` impls (the latter records `set_nozzle` calls for spray assertions), **PX4 SITL** as a nightly gate | Pure-Rust test stack. Hardware mocks are trait impls; the executor unit-tests against fakes in milliseconds. |
 
 ## Workspace structure
 
@@ -223,7 +253,7 @@ What stays binary-specific, in `legion`:
 |---|---|
 | `main.rs`, clap CLI, figment config loading | std-only |
 | `tracing` setup, journald output | std-only (MCU uses `defmt`) |
-| `RppalPump`, `RppalNozzle`, `RppalTof`, `RppalPaintLevel` | rppal is std-only and Pi-specific |
+| `RppalTof` | rppal is std-only and Pi-specific; v1 uses it only for the VL53L1X over I²C |
 | `RustMavlinkDriver` (impls `MavlinkBackend`) | uses `tokio-serial` and the std features of the `mavlink` crate |
 | `TcpTransport` / `SerialTransport` | from `hivemind-protocol`, behind feature flags, std-only |
 | `FileSortieStore` | uses `std::fs` |
@@ -233,33 +263,25 @@ Sketch of the trait surface in `legion-core`:
 
 ```rust
 // legion-core/src/traits/payload.rs
-
-pub trait Pump: Send {
-    fn on(&mut self) -> Result<(), PayloadError>;
-    fn off(&mut self) -> Result<(), PayloadError>;
-    fn is_on(&self) -> bool;
-}
-
-pub trait Nozzle: Send {
-    fn open(&mut self) -> Result<(), PayloadError>;
-    fn close(&mut self) -> Result<(), PayloadError>;
-}
+//
+// Pi-side sensors only. The nozzle is NOT here — it's on Pixhawk
+// AUX5 and lives on MavlinkBackend::set_nozzle. See the "Nozzle
+// control — Pixhawk AUX5 via MAVLink" section above for rationale.
 
 pub trait Tof: Send {
-    fn read_cm(&mut self) -> Result<f32, PayloadError>;
+    async fn read_cm(&mut self) -> Result<f32, PayloadError>;
 }
 
 pub trait PaintLevel: Send {
-    fn read_ml(&mut self) -> Result<f32, PayloadError>;
+    /// v1 returns `PayloadError::NotInstalled` — there's no HX711
+    /// load cell on the cheap-build aerosol payload (see
+    /// `hw/nozzle/README.md`). v2 swaps in a real impl.
+    async fn read_ml(&mut self) -> Result<f32, PayloadError>;
 }
 
 pub trait Payload {
-    type Pump: Pump;
-    type Nozzle: Nozzle;
     type Tof: Tof;
     type PaintLevel: PaintLevel;
-    fn pump(&mut self) -> &mut Self::Pump;
-    fn nozzle(&mut self) -> &mut Self::Nozzle;
     fn tof(&mut self) -> &mut Self::Tof;
     fn paint_level(&mut self) -> &mut Self::PaintLevel;
 }
@@ -268,16 +290,22 @@ pub trait Payload {
 ```rust
 // legion-core/src/traits/mavlink.rs
 
-pub trait MavlinkBackend: Send {
+pub trait MavlinkBackend: Send + Sync {
     async fn arm(&self) -> Result<(), MavlinkError>;
+    async fn disarm(&self) -> Result<(), MavlinkError>;
     async fn takeoff(&self, alt_m: f32) -> Result<(), MavlinkError>;
-    async fn goto(&self, wp: &Waypoint, speed_m_s: f32) -> Result<(), MavlinkError>;
+    async fn goto(&self, wp: Waypoint, speed_m_s: f32) -> Result<(), MavlinkError>;
     async fn follow_path(&self, path: &[Waypoint], speed_m_s: f32) -> Result<(), MavlinkError>;
     async fn return_to_launch(&self) -> Result<(), MavlinkError>;
     async fn land(&self) -> Result<(), MavlinkError>;
     async fn hold(&self) -> Result<(), MavlinkError>;
     async fn emergency_pullback(&self) -> Result<(), MavlinkError>;
     async fn inject_rtk(&self, rtcm: &[u8]) -> Result<(), MavlinkError>;
+    /// Command the nozzle servo on Pixhawk AUX5. `true` = pressed
+    /// (spray on), `false` = released (spray off). Single entry
+    /// point for all spray control — the executor, the safety
+    /// loop, and the radio-loss policy all funnel through this.
+    async fn set_nozzle(&self, open: bool) -> Result<(), MavlinkError>;
     fn position(&self) -> Position;
     fn battery_pct(&self) -> f32;
 }
@@ -324,10 +352,12 @@ Legion is one Rust binary running ~5 concurrent tokio tasks, sharing state via a
          ▼                                              ▼
 ┌─────────────────┐                          ┌──────────────────┐
 │Telemetry Pumper │                          │ Payload Drivers  │
-│(2 Hz to oracle) │                          │ pump, nozzle,    │
-└─────────────────┘                          │ ToF, paint level │
-                                             │ (rppal)          │
-                                             └──────────────────┘
+│(2 Hz to oracle) │                          │  ToF (rppal I²C) │
+└─────────────────┘                          └──────────────────┘
+                                             (nozzle is on AUX5,
+                                              not on the Pi, see
+                                              the Nozzle control
+                                              section above)
 ```
 
 Three things to note:
@@ -351,7 +381,7 @@ legion-core/
     │
     ├── traits/                  ← *definitions only*, no impls
     │   ├── mod.rs
-    │   ├── payload.rs           ← Pump, Nozzle, Tof, PaintLevel, Payload super-trait
+    │   ├── payload.rs           ← Tof, PaintLevel, Payload super-trait (no Pump / Nozzle — nozzle lives on MavlinkBackend)
     │   ├── mavlink.rs           ← MavlinkBackend (async fn in trait)
     │   ├── transport.rs         ← re-export Transport from hivemind-protocol
     │   ├── store.rs             ← SortieStore
@@ -398,13 +428,11 @@ legion/
     │   ├── telemetry.rs         ← decode HEARTBEAT, GLOBAL_POSITION_INT, BATTERY_STATUS, ATTITUDE, MISSION_CURRENT
     │   └── rtk.rs               ← inject GPS_RTCM_DATA from oracle's RtkCorrection frames
     │
-    ├── payload/                 ← legion_core::traits::Payload impls via rppal
+    ├── payload/                 ← legion_core::traits::Payload impls (Pi sensors only)
     │   ├── mod.rs               ← RppalPayload super-impl
-    │   ├── pump.rs              ← RppalPump (GPIO output)
-    │   ├── nozzle.rs            ← RppalNozzle (PWM)
-    │   ├── tof.rs               ← RppalTof (I²C, e.g. VL53L1X)
-    │   ├── paint_level.rs       ← RppalPaintLevel (ADC over SPI, or float switch on GPIO)
-    │   └── mock.rs              ← MockPayload for tests (also in legion-core/tests if shared)
+    │   ├── tof.rs               ← RppalTof (I²C, VL53L1X on v1)
+    │   ├── paint_level.rs       ← NotInstalledPaintLevel on v1; real HX711 impl on v2
+    │   └── mock.rs              ← MockPayload (healthy-default sensor readings for SITL/dev)
     │
     ├── store/                   ← legion_core::traits::SortieStore impl: file-backed
     │   ├── mod.rs
@@ -701,38 +729,40 @@ pub async fn safety_loop<P, M, C>(
         tick.tick().await;
 
         // 1. ToF wall avoidance
-        if let Some(tof) = payload.tof.read_cm().await {
+        if let Ok(tof) = payload.tof().read_cm().await {
             if tof < cfg.tof_min_cm {
-                emit(&safety_tx, SafetyState::TofAvoidance { tof });
-                let _ = link.lock().await.send(SafetyEvent { /* ... */ }).await;
+                emit(&safety_tx, SafetyState::TofAvoidance { tof_cm: tof });
+                let _ = mavlink.set_nozzle(false).await;     // cut the nozzle (AUX5)
                 let _ = mavlink.emergency_pullback().await;
                 continue;
             }
         }
 
         // 2. Battery critical
-        let battery = state.read().await.battery_pct;
-        if battery < cfg.battery_critical_pct {
-            emit(&safety_tx, SafetyState::BatteryCritical { battery });
-            payload.pump.off().await;
+        let battery = mavlink.battery_pct();
+        if battery > 0.0 && battery < cfg.battery_critical_pct {
+            emit(&safety_tx, SafetyState::BatteryCritical { battery_pct: battery });
+            let _ = mavlink.set_nozzle(false).await;
             let _ = mavlink.return_to_launch().await;
             continue;
         }
 
-        // 3. Paint empty
-        let paint = payload.paint_level.read_ml().await.unwrap_or(0.0);
-        if paint < cfg.paint_empty_ml {
-            emit(&safety_tx, SafetyState::PaintEmpty { paint });
-            payload.pump.off().await;
-            let _ = mavlink.return_to_launch().await;
-            continue;
+        // 3. Paint empty (v1: skipped — paint_level returns NotInstalled,
+        //    see hw/nozzle/README.md; v2 load cell will populate this).
+        if let Ok(paint) = payload.paint_level().read_ml().await {
+            if paint < cfg.paint_empty_ml {
+                emit(&safety_tx, SafetyState::PaintEmpty { paint_ml: paint });
+                let _ = mavlink.set_nozzle(false).await;
+                let _ = mavlink.return_to_launch().await;
+                continue;
+            }
         }
 
-        // 4. Oracle heartbeat — only stop spraying. The executor's radio loss
-        //    policy decides what to do about flight.
-        let silence = state.read().await.last_oracle_contact.elapsed();
-        if silence > cfg.oracle_silent {
-            payload.pump().off().ok();
+        // 4. Oracle heartbeat — only stop spraying. The executor's radio
+        //    loss policy decides what to do about flight.
+        let silence = state.read().await.last_oracle_contact_ms;
+        if clock.elapsed_ms(silence) > cfg.oracle_silent_ms {
+            let _ = mavlink.set_nozzle(false).await;
         }
     }
 }
@@ -835,7 +865,7 @@ This is the same conservative posture the parent oracle README takes for plan re
 1. systemd starts `legion.service`.
 2. legion loads `/etc/legion/config.toml`.
 3. Connects MAVLink via `tokio-serial` to `/dev/ttyAMA0` (Pixhawk TELEM2). Waits for the first `HEARTBEAT`. Times out after 30 s and exits.
-4. Initialises payload drivers via `rppal`: pump in known-off state, nozzle in closed state, sensors readable.
+4. Initialises the Pi-side payload drivers via `rppal` (VL53L1X ToF over I²C). Issues `mavlink.set_nozzle(false)` to leave the Pixhawk AUX5 servo released before anything else touches it.
 5. **Starts the safety loop.** From this moment forward, the drone is protected.
 6. Opens the radio transport (`SerialTransport` on `/dev/ttyUSB0`). Sends `Hello { drone_id, capabilities, in_progress_sortie? }`. Reads the persistence directory and reports any in-progress sortie.
 7. Idle, waiting for `UploadSortie`.
@@ -879,11 +909,19 @@ oracle_silent_s = 5.0
 sortie_dir = "/var/lib/legion/sorties"
 
 [payload]
-pump_gpio_pin = 17
-nozzle_pwm_channel = 0
+# Forward ToF sensor — VL53L1X on the Pi's I²C bus. The ToF is the
+# only Pi-side peripheral legion drives directly on v1.
+tof_i2c_bus = 1
 tof_i2c_address = 0x29
-paint_level_spi_bus = 0
-paint_level_spi_cs = 0
+
+[nozzle]
+# v1 spray servo lives on Pixhawk AUX5, not on the Pi — see
+# hw/nozzle/README.md. legion commands it via MAVLink
+# (MAV_CMD_DO_SET_SERVO). Only the servo index + PWM endpoints
+# are configurable; the physical wiring is fixed to AUX5.
+aux_servo_index = 5
+pwm_open_us  = 2000    # matches PWM_AUX_MAX5 in PX4 params
+pwm_closed_us = 1000   # matches PWM_AUX_MIN5 in PX4 params
 ```
 
 ## CLI
@@ -895,7 +933,7 @@ $ legion serve                                    # production daemon (what syst
 $ legion debug status                             # show drone state, sensor reads, transport state
 $ legion debug arm                                # arm the autopilot (refuses if not in safe ground state)
 $ legion debug fly-to <lat> <lon> <alt>           # send a single goto
-$ legion debug pump on|off                        # poke the spray pump
+$ legion debug nozzle on|off                      # toggle the AUX5 spray servo via MAVLink
 $ legion debug load-sortie <file.json>            # bypass oracle, load a sortie locally
 $ legion debug execute --auto-proceed             # run the loaded sortie autonomously
 $ legion debug protocol-tail                      # pretty-print every frame on the transport
@@ -907,7 +945,7 @@ Both `serve` and `debug` import the same modules — no parallel implementations
 
 1. **Unit tests** for the executor state machine. Run the executor against a `MockMavlinkDriver` and a `MockTransport` that scripts a `Proceed`/`HoldStep`/`AbortSortie` sequence. Validates: every step completes correctly, every radio-loss policy triggers correctly, safety preemption interrupts cleanly, `expected_step_index` mismatches are rejected.
 2. **Protocol round-trip tests** in the `hivemind-protocol` crate that take every message type, postcard-encode/COBS-frame/decode it, and assert deep equality.
-3. **Hardware mock layer.** `Pump`, `Nozzle`, `Tof`, `PaintLevel` are traits with `RppalBackend` and `MockBackend` impls. Tests run against the mocks; production runs against rppal.
+3. **Hardware mock layer.** `Tof` and `PaintLevel` are the Pi-side payload traits; v1 has `RppalTof` (VL53L1X over I²C) and a `NotInstalledPaintLevel` stub. Tests run against `MockPayload`; production runs against rppal. The nozzle has no trait in `legion-core::traits::payload` — it's on `MavlinkBackend::set_nozzle`, backed by `StubMavlinkDriver` in tests and `RustMavlinkDriver` in production.
 4. **PX4 SITL gate** (nightly). Real legion process, real `mavlink` crate, against PX4 SITL in docker. Loads a fixture sortie via the debug CLI, executes it without oracle, asserts the SITL drone reaches the planned waypoints.
 5. **Oracle pair test** (nightly). Real legion + real oracle (both Rust binaries from the same workspace), with PX4 SITL on the legion side and a `TcpTransport` between the two binaries (so we don't need a real radio in CI). Full end-to-end: oracle uploads sortie, legion confirms steps, sortie completes.
 
@@ -918,7 +956,7 @@ Both `serve` and `debug` import the same modules — no parallel implementations
 - `RustMavlinkDriver` impl covering arm, takeoff, goto, follow_path (offboard), RTL, land, hold, RTK injection.
 - Sortie executor with the full step-confirmation handshake and per-step radio loss policy.
 - 10 Hz safety loop wrapper around `legion_core::safety::check`.
-- `RppalPayload` impl for the v1 hardware (Pi 5, ToF VL53L1X, peristaltic pump on GPIO, SG90 nozzle servo, paint-level ADC over SPI).
+- `RppalPayload` impl for the v1 hardware — forward VL53L1X over I²C. No Pi-side pump, no Pi-side nozzle, no paint-level ADC: the spray servo is commanded via MAVLink to Pixhawk AUX5 (see [hw/nozzle](../../hw/nozzle/README.md)), and v1 has no load cell.
 - `FileSortieStore` impl: sorties + checkpointed progress as serde_json files in `/var/lib/legion/`.
 - `SerialTransport` over `tokio-serial` for the v1 radio (HolyBro SiK 433 MHz EU variant; RFD868x for v2, same UART interface).
 - `TcpTransport` (behind `--features tcp`) for SITL and dev.

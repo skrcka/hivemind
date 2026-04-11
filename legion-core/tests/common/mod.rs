@@ -11,8 +11,7 @@ use legion_core::error::{LinkError, MavlinkError, PayloadError, StoreError};
 use legion_core::traits::link::ExecutorEvent;
 use legion_core::traits::store::SortieProgress;
 use legion_core::{
-    Clock, LegionToOracle, Link, MavlinkBackend, Nozzle, PaintLevel, Payload, Pump, Sortie,
-    SortieStore, Tof,
+    Clock, LegionToOracle, Link, MavlinkBackend, PaintLevel, Payload, Sortie, SortieStore, Tof,
 };
 use legion_core::{Position, Waypoint};
 
@@ -54,52 +53,6 @@ impl Clock for FakeClock {
 }
 
 // ─── Payload ─────────────────────────────────────────────────────
-
-#[derive(Default)]
-pub struct MockPump {
-    pub on: bool,
-    pub on_calls: u32,
-    pub off_calls: u32,
-}
-
-impl Pump for MockPump {
-    async fn on(&mut self) -> Result<(), PayloadError> {
-        self.on = true;
-        self.on_calls += 1;
-        Ok(())
-    }
-    async fn off(&mut self) -> Result<(), PayloadError> {
-        self.on = false;
-        self.off_calls += 1;
-        Ok(())
-    }
-    fn is_on(&self) -> bool {
-        self.on
-    }
-}
-
-#[derive(Default)]
-pub struct MockNozzle {
-    pub open: bool,
-    pub open_calls: u32,
-    pub close_calls: u32,
-}
-
-impl Nozzle for MockNozzle {
-    async fn open(&mut self) -> Result<(), PayloadError> {
-        self.open = true;
-        self.open_calls += 1;
-        Ok(())
-    }
-    async fn close(&mut self) -> Result<(), PayloadError> {
-        self.open = false;
-        self.close_calls += 1;
-        Ok(())
-    }
-    fn is_open(&self) -> bool {
-        self.open
-    }
-}
 
 pub struct MockTof {
     /// Scripted readings. Pops from the front; if empty, returns the
@@ -148,8 +101,6 @@ impl PaintLevel for MockPaintLevel {
 }
 
 pub struct MockPayload {
-    pub pump: MockPump,
-    pub nozzle: MockNozzle,
     pub tof: MockTof,
     pub paint_level: MockPaintLevel,
 }
@@ -157,8 +108,6 @@ pub struct MockPayload {
 impl MockPayload {
     pub fn healthy() -> Self {
         Self {
-            pump: MockPump::default(),
-            nozzle: MockNozzle::default(),
             tof: MockTof::new([500.0]),
             paint_level: MockPaintLevel::new([1000.0]),
         }
@@ -166,17 +115,9 @@ impl MockPayload {
 }
 
 impl Payload for MockPayload {
-    type Pump = MockPump;
-    type Nozzle = MockNozzle;
     type Tof = MockTof;
     type PaintLevel = MockPaintLevel;
 
-    fn pump(&mut self) -> &mut Self::Pump {
-        &mut self.pump
-    }
-    fn nozzle(&mut self) -> &mut Self::Nozzle {
-        &mut self.nozzle
-    }
     fn tof(&mut self) -> &mut Self::Tof {
         &mut self.tof
     }
@@ -199,12 +140,14 @@ pub enum MavCall {
     Hold,
     EmergencyPullback,
     InjectRtk(Vec<u8>),
+    SetNozzle(bool),
 }
 
 pub struct MockMavlink {
     pub calls: Arc<Mutex<Vec<MavCall>>>,
     pub battery_pct: Arc<Mutex<f32>>,
     pub position: Arc<Mutex<Position>>,
+    pub nozzle_open: Arc<Mutex<bool>>,
 }
 
 impl MockMavlink {
@@ -217,6 +160,7 @@ impl MockMavlink {
                 lon: 0.0,
                 alt_m: 0.0,
             })),
+            nozzle_open: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -230,6 +174,10 @@ impl MockMavlink {
 
     pub fn set_battery(&self, pct: f32) {
         *self.battery_pct.lock().unwrap() = pct;
+    }
+
+    pub fn is_nozzle_open(&self) -> bool {
+        *self.nozzle_open.lock().unwrap()
     }
 }
 
@@ -272,6 +220,11 @@ impl MavlinkBackend for MockMavlink {
     }
     async fn inject_rtk(&self, rtcm: &[u8]) -> Result<(), MavlinkError> {
         self.record(MavCall::InjectRtk(rtcm.to_vec()));
+        Ok(())
+    }
+    async fn set_nozzle(&self, open: bool) -> Result<(), MavlinkError> {
+        self.record(MavCall::SetNozzle(open));
+        *self.nozzle_open.lock().unwrap() = open;
         Ok(())
     }
     fn position(&self) -> Position {

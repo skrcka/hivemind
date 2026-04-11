@@ -1,0 +1,11 @@
+# praetor-specific generated artifacts. Project-wide patterns
+# (target/, *.log, IDE files, etc.) live in the repo-root .gitignore.
+
+# Tauri auto-generated permission schemas — regenerated on every build.
+gen/
+
+# Frontend build output and node_modules (also caught by the root
+# .gitignore's node_modules/ but listed here for clarity when grepping
+# in this subtree).
+ui/dist/
+ui/node_modules/

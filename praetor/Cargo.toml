@@ -1,0 +1,87 @@
+[package]
+name = "praetor"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Hivemind direct manual-control Tauri client — Xbox controller → MAVLink"
+
+[[bin]]
+name = "praetor"
+path = "src/main.rs"
+
+[lib]
+name = "praetor_lib"
+path = "src/lib.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# ── Tauri shell ──────────────────────────────────────────────────────
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+
+# ── Async runtime ────────────────────────────────────────────────────
+tokio = { version = "1.40", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "signal",
+    "io-util",
+] }
+futures = "0.3"
+
+# ── Gamepad (Xbox controller) ────────────────────────────────────────
+gilrs = "0.10"
+
+# ── MAVLink to Pixhawk (TELEM1 via second SiK radio or SITL TCP) ─────
+mavlink = { version = "0.13", default-features = false, features = [
+    "std",
+    "common",
+    "serde",
+] }
+tokio-serial = "5.4"
+
+# ── Config + serialization ───────────────────────────────────────────
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+figment = { version = "0.10", features = ["toml", "env"] }
+toml = "0.8"
+
+# ── Observability ────────────────────────────────────────────────────
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ── Errors ───────────────────────────────────────────────────────────
+thiserror = "1.0"
+anyhow = "1.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+
+# Tauri command handlers must be `async fn` to receive `State<'_, T>` —
+# the fact that some of them only push to a watch channel is fine.
+unused_async = "allow"
+
+# ButtonStates legitimately tracks 7 independent button latches; that's
+# the right shape for this domain, not a code smell.
+struct_excessive_bools = "allow"
+
+# The float→int casts in intent.rs are preceded by `.clamp(-1.0, 1.0)` /
+# `.clamp(0.0, 1.0)`, which clippy can't prove. The unchecked-Duration-sub
+# sites are preceded by `if elapsed < required` for the same reason.
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+unchecked_time_subtraction = "allow"

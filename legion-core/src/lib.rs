@@ -39,7 +39,7 @@ pub use error::{CoreError, LinkError, MavlinkError, PayloadError, StoreError};
 pub use executor::{ExecutorEvent, StepOutcome};
 pub use safety::{SafetyConfig, SafetyOutcome, SafetyState};
 pub use state::LegionState;
-pub use traits::{Clock, Link, MavlinkBackend, Nozzle, PaintLevel, Payload, Pump, SortieStore, Tof};
+pub use traits::{Clock, Link, MavlinkBackend, PaintLevel, Payload, SortieStore, Tof};
 
 /// Re-exports of the wire types legion's logic operates on. The core never
 /// defines its own Sortie — it uses the canonical protocol crate types.

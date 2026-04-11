@@ -1,15 +1,19 @@
-//! Per-`StepType` handlers. Each handler owns the MAVLink sequence and
-//! pump/nozzle state changes for its step type and returns a
-//! [`StepOutcome`] on success (or a `CoreError` on failure).
+//! Per-`StepType` handlers. Each handler owns the MAVLink sequence
+//! for its step type and returns a [`StepOutcome`] on success (or a
+//! `CoreError` on failure).
 //!
-//! All handlers are `&mut`-free on the `MavlinkBackend` (the trait is
-//! `&self`-only) but `&mut` on the `Payload` (because pump/nozzle state
-//! is tracked in software).
+//! Spray control is a single `MavlinkBackend::set_nozzle` call — the
+//! v1 spray mechanism is a servo on Pixhawk AUX5 (see
+//! `hw/nozzle/README.md`), so spraying is commanded through the
+//! MAVLink backend, not through a Pi-side `Payload` trait. The
+//! `Payload` bundle in this module exists only for forward-passing
+//! to `run_step`'s signature stability with sensor-using handlers
+//! we may add later.
 
 use core::time::Duration;
 
 use crate::error::CoreError;
-use crate::traits::{Clock, MavlinkBackend, Nozzle, Payload, Pump};
+use crate::traits::{Clock, MavlinkBackend, Payload};
 use hivemind_protocol::{SortieStep, StepType};
 
 /// Per-step result. The duration is wall-clock time elapsed from the
@@ -33,15 +37,16 @@ where
     M: MavlinkBackend,
     C: Clock,
 {
+    let _ = payload; // reserved for future sensor-using step handlers
     let start_ms = clock.now_ms();
 
-    // The spray flag on the step is authoritative: the handler opens the
-    // nozzle and starts the pump at entry if `step.spray` is true, and
-    // closes/stops them on exit. Safety may still override both at any
-    // point, but that's out of our hands.
+    // The spray flag on the step is authoritative: the handler opens
+    // the nozzle at entry if `step.spray` is true, and closes it on
+    // exit. The nozzle is a Pixhawk AUX5 actuator, commanded through
+    // the MAVLink backend — see `hw/nozzle/README.md`. Safety may
+    // still override the nozzle at any point.
     if step.spray {
-        payload.nozzle().open().await?;
-        payload.pump().on().await?;
+        mavlink.set_nozzle(true).await?;
     }
 
     let result = match step.step_type {
@@ -54,11 +59,10 @@ where
         StepType::Land => do_land(mavlink).await,
     };
 
-    // Always drop spray on exit — even on error. The safety loop would
-    // catch this eventually, but being explicit here is cheap.
+    // Always drop spray on exit — even on error. The safety loop
+    // would catch this eventually, but being explicit here is cheap.
     if step.spray {
-        let _ = payload.pump().off().await;
-        let _ = payload.nozzle().close().await;
+        let _ = mavlink.set_nozzle(false).await;
     }
 
     result?;

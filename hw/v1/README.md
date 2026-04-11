@@ -4,7 +4,7 @@
 
 **Goal:** fly one drone to a wall, spray paint on it, come back. Everything runs on one laptop.
 
-v1 deliberately strips out everything that isn't load-bearing for that goal. No RTK, no swarm, no oracle service, no pantheon UI, no automated refill. The point of v1 is to validate the *physical pipeline* — frame, motors, payload, pump, nozzle, ToF sensor, MAVLink loop — on hardware that costs less than €800.
+v1 deliberately strips out everything that isn't load-bearing for that goal. No RTK, no swarm, no oracle service, no pantheon UI, no automated refill, no pump (the v1 payload is a servo pressing an aerosol can — see [hw/nozzle](../nozzle/README.md)). The point of v1 is to validate the *physical pipeline* — frame, motors, servo-actuated aerosol payload, ToF sensor, MAVLink loop — on hardware that costs less than €800.
 
 ## Ground station
 
@@ -47,7 +47,7 @@ v1 uses an off-the-shelf aerosol spray paint can actuated by an SG90 servo. The 
 
 | Item | Specific product | Role | Price |
 |---|---|---|---|
-| Servo | SG90 180° positional, 9 g | Pushes the spray can nozzle down on command. Driven by Pixhawk AUX5 (preferred) or Pi GPIO 18. | €3 |
+| Servo | SG90 180° positional, 9 g | Pushes the spray can nozzle down on command. Wired to Pixhawk AUX5; legion commands it via MAVLink `MAV_CMD_DO_SET_SERVO`. | €3 |
 | Spray can | Standard 400 ml aerosol paint, hardware store | The whole payload. Spring-loaded nozzle does the spraying when the servo arm presses it. | €4 |
 | Hose clamp | 60–80 mm adjustable metal band | Mounts the can vertically to the X500 frame, nozzle pointing down, near the drone CG. | €1 |
 | L-bracket | Aluminium or 3D-printed | Mounts the SG90 to the frame so the arm can reach the nozzle button. | €2 |

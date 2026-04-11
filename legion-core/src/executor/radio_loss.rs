@@ -19,7 +19,7 @@ use alloc::string::ToString;
 use core::time::Duration;
 
 use crate::error::CoreError;
-use crate::traits::{Clock, Link, MavlinkBackend, Payload, Pump};
+use crate::traits::{Clock, Link, MavlinkBackend, Payload};
 use hivemind_protocol::{LegionToOracle, RadioLossBehaviour, Sortie, SortieStep};
 
 use super::steps;
@@ -41,9 +41,9 @@ where
     C: Clock,
     L: Link,
 {
-    // In every case, the first thing we do is drop the pump. Paint
+    // In every case, the first thing we do is cut the nozzle. Paint
     // without supervision is never correct.
-    let _ = payload.pump().off().await;
+    let _ = mavlink.set_nozzle(false).await;
 
     match step.radio_loss.behaviour {
         RadioLossBehaviour::Continue => {
