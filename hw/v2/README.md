@@ -100,6 +100,19 @@ For RTK-georeferenced scans (which is what the spatial-alignment pipeline assume
 | Scout drone | €900 |
 | **Production total** | **~€12,870** |
 
+## Alternate payload modules
+
+The same drone platform supports two **swappable payload modules**, selected per-drone via legion config at startup. The frame, motors, ESCs, Pixhawk, Pi, and legion agent are unchanged between them; only what's bolted to the bottom plate (and which AUX outputs are wired) differs.
+
+| Payload | Doc | What it adds | Per-drone cost on top of base flight platform |
+|---|---|---|---|
+| **Paint** (v2 production) | [paint payload section above](#spray-payload-production) | Peristaltic pump + bayonet cartridge + TeeJet nozzle + load cell + drip guard | €72 |
+| **Wash** (alternate v2 variant) | [hw/wash](../wash/README.md) | Solenoid valve + pressure nozzle + 64 mm EDF counter-thrust fan + ESC + water cartridge + tubing + bracket | ~€50 |
+
+The wash variant exists because pressure washing has a problem the paint variant doesn't: a soft-wash nozzle at 1–2 L/min produces ~500–600 g of continuous reaction force, which would shove the drone off the wall. The wash payload adds a counter-thrust EDF on the opposite side of the frame that cancels that force in real time, leaving PX4 to handle only the small residual through normal tilt compensation. Full design, calibration procedure, weight budget, and BOM in [hw/wash/README.md](../wash/README.md).
+
+The wash variant is **not part of the v2 ~€12,870 production total above**. It is an optional alternate payload that can be loaded onto v2 drones once the paint flight loop is in commercial service. A full 10-drone wash fleet adds ~€500 of payload-side hardware to the production total. None of the v2 ground station, RTK, fleet management, or oracle/legion software changes — wash is a payload swap, not a platform change.
+
 ## Physical layout at the job site
 
 ```

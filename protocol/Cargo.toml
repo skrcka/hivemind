@@ -1,0 +1,26 @@
+[package]
+name = "hivemind-protocol"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared wire-format crate for the Hivemind oracle <-> legion link"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+std = []
+tcp = ["std", "dep:tokio"]
+serial = ["std", "dep:tokio", "dep:tokio-serial"]
+
+[dependencies]
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+postcard = { version = "1.1", default-features = false, features = ["alloc"] }
+cobs = { version = "0.3", default-features = false }
+
+tokio = { version = "1.40", default-features = false, features = ["net", "io-util"], optional = true }
+tokio-serial = { version = "5.4", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }

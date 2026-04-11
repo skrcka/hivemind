@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m unittest discover -s tests -v)",
+      "Bash(python3 -m py_compile hivemind_plane_picker/__init__.py hivemind_plane_picker/intent.py hivemind_plane_picker/properties.py hivemind_plane_picker/operators.py hivemind_plane_picker/ui.py)",
+      "Bash(find . -name __pycache__ -type d -exec rm -rf {} +)",
+      "Bash(make test:*)",
+      "Bash(make build:*)",
+      "Bash(unzip:*)",
+      "Bash(make clean:*)",
+      "Bash(rustc --version)",
+      "Bash(cargo --version)",
+      "Bash(cargo check:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(find /Users/skrcka/arxvel/hivemind/protocol /Users/skrcka/arxvel/hivemind/Cargo.toml /Users/skrcka/arxvel/hivemind/.gitignore -type f -not -path */target/*)"
+    ]
+  }
+}

@@ -6,14 +6,18 @@ Remote control platform for swarms of industrial drones. Hivemind coordinates fl
 
 A human operator drives the system from a single control plane. They load a 3D scan of the target structure, plan the work, push the plan to the swarm, and supervise execution with the ability to intervene at any point. The drones execute autonomously where possible and fall back to operator control when needed.
 
+The same drone platform supports two **swappable payload modules** — paint and pressure-wash — selected per-drone via legion config at startup. Frame, motors, Pixhawk, Pi, and the entire ground stack are identical between them; only the bottom-plate hardware differs. v1 ships the paint module to validate the flight loop; the wash module is designed and documented for v2 deployment ([hw/wash](hw/wash/README.md)).
+
 ## Submodules
 
 ### pantheon
-Operator control plane. Long-term: Tauri + React desktop application. **v1: Blender + Skybrush Studio with custom Python plugins.**
+Operator control plane. Long-term: Tauri + React desktop application. **v1: small Blender add-on (Hivemind Plane Picker).**
 
-This is where the human sits. Pantheon visualizes 3D scans of target structures, displays live swarm status, and exposes manual controls and behavior overrides for individual drones or the whole fleet. Mission plans are authored or reviewed here and handed off to oracle for execution.
+Pantheon is the **CAD tool** of the system — it is where the operator opens a 3D scan of the structure, picks the surfaces to be painted, and exports an *intent file* for oracle. It does not generate drone paths, schedule sorties, or talk to drones — those are oracle's job. The boundary is intentionally sharp: pantheon = *what to paint*, oracle = *how to fly it*.
 
-For v1, "pantheon" is not a custom app — it is Blender (for 3D viz and path editing) + Skybrush Studio (for drone trajectory export and safety validation) + a small set of Hivemind Python plugins that add the industrial-painting bits (surface-following toolpaths, refill scheduling). The custom Tauri + React app is built later, once Blender's UX proves too clunky for field operators and the problem space is well understood.
+For v1, pantheon is a ~100-line Blender add-on with three operations: import a mesh, mark face selections as named regions, export `intent.json`. The custom Tauri + React app comes later, once v1 has proven the workflow and the problem space is well understood — at which point pantheon also gains a plan review UI and a live telemetry overlay on the 3D model. The intent file format stays the same across phases, so the migration is a UI swap, not a rewrite.
+
+Detailed design, the v1 add-on code, and the intent file schema in [pantheon/README.md](pantheon/README.md).
 
 ### legion
 On-drone agent. One instance per drone.
@@ -31,7 +35,7 @@ Orchestrator and integration hub. Mix of hardware and software.
 Oracle is the bridge between pantheon (intent) and legion (execution). It handles communication with all drones, ingests data from every part of the system, and uploads mission plans to the drones. Pantheon hands plans to oracle; oracle distributes them to the swarm via legion and routes telemetry back the other way. Detailed design in [oracle/README.md](oracle/README.md).
 
 ### hw
-Hardware specification — frames, flight controllers, payloads, ground station, RTK, refill. Split by phase: [hw/v1](hw/v1/README.md) (~€746, one drone, prove the pipeline) and [hw/v2](hw/v2/README.md) (~€13K, 10-drone production system on a truck). The v1 spray mechanism — SG90 servo pressing a standard hardware-store aerosol can, ~€10 of parts — has its own build doc at [hw/nozzle](hw/nozzle/README.md). Index in [hw/README.md](hw/README.md).
+Hardware specification — frames, flight controllers, payloads, ground station, RTK, refill. Split by phase: [hw/v1](hw/v1/README.md) (~€746, one drone, prove the pipeline) and [hw/v2](hw/v2/README.md) (~€13K, 10-drone production system on a truck). Two swappable payload modules on the same drone: [hw/nozzle](hw/nozzle/README.md) (paint — v1's SG90 servo pressing a standard aerosol can, ~€10) and [hw/wash](hw/wash/README.md) (pressure-wash with a 64 mm EDF counter-thrust fan that cancels the wash nozzle's reaction force, ~€50 add-on, designed for v2). Index in [hw/README.md](hw/README.md).
 
 ## Data flow
 
@@ -103,79 +107,41 @@ A drone with a camera or LiDAR doing photogrammetry. Existing solutions cover al
 
 What Hivemind builds: the pipeline glue that takes ODM output and imports it into pantheon.
 
-#### pantheon — v1: build 15% / reuse 85% · long-term: build 70% / reuse 30%
-The most original work in the project. Nothing off-the-shelf does "load a 3D mesh of a bridge, let an operator paint regions on it, generate drone spray paths from those regions" — but **Blender + Skybrush Studio gets ~70% of the way there for free**, and Hivemind ships v1 on top of it.
+#### pantheon — v1: build 5% / reuse 95% · long-term: build 70% / reuse 30%
+Pantheon is the **CAD tool**; oracle is the **slicer**. Pantheon authors *what* should be painted (regions on a 3D mesh + paint spec + constraints) and hands it to oracle as an intent file. Oracle does everything from there: path generation, lane assignment, fleet scheduling, drone communication. The boundary is sharp on purpose — see [pantheon/README.md](pantheon/README.md) and [oracle's slicer rationale](oracle/README.md#the-core-insight-oracle-is-the-slicer).
 
-**v1 — Blender + Skybrush Studio + Hivemind plugins.**
-Skybrush Studio for Blender already does most of the heavy lifting:
-- Imports 3D geometry (the bridge scan).
-- Defines drone formations and trajectories in 3D space relative to the geometry.
-- Validates collisions (minimum distance between all drones), velocity, and acceleration limits.
-- Exports per-drone missions as `.skyc` with real-world GPS coordinates.
-- Generates safety reports (PDF: nearest-neighbor distances, speed limits, etc.).
-- Hands missions to Skybrush Server, which uploads them to the drones.
-
-The pipeline becomes:
+**v1 — Blender add-on (Hivemind Plane Picker).**
+Three operations and an export format. Nothing else.
 
 ```
 Bridge scan (OBJ/PLY)
   → Import into Blender
-    → Hivemind plugin generates surface-following spray paths
-      → Skybrush Studio validates and exports .skyc
-        → Skybrush Server uploads to drones
-          → Drones execute
+    → Operator selects faces, marks them as named regions
+      → Hivemind add-on exports intent.json
+        → oracle ingests:  hivemind plan --intent intent.json
 ```
 
-Skybrush Studio was designed for "drones as flying pixels making shapes in the sky," not "drones as workers following a surface." The two gaps Hivemind fills as **Blender Python plugins**:
-
-1. **Surface path generator** — takes the bridge mesh, generates parallel spray passes at a fixed standoff distance from the surface (think CNC toolpath, but in 3D), and emits Skybrush-compatible drone trajectories.
-2. **Refill scheduler** — splits long paths into per-load segments based on paint capacity (e.g. 500 g per drone) and inserts return-to-base waypoints between segments.
-
-Sketch of the plugin pattern:
-
-```python
-import bpy
-from bpy.props import FloatProperty
-from skybrush_studio import StoryboardEntry
-
-class GenerateSprayPaths(bpy.types.Operator):
-    bl_idname = "hivemind.generate_spray_paths"
-    bl_label = "Generate Spray Paths"
-
-    standoff_distance: FloatProperty(default=0.5)  # meters from surface
-    spray_width: FloatProperty(default=0.3)        # meters per pass
-    paint_capacity: FloatProperty(default=0.5)     # kg per drone load
-
-    def execute(self, context):
-        bridge_mesh = context.active_object
-        # generate parallel passes offset from surface
-        # split into per-drone segments based on paint capacity
-        # create Skybrush storyboard entries
-        return {'FINISHED'}
-```
-
-For live operations, **Skybrush Live** (the web GCS) is used as-is — it shows all drones on a map with status, and operators can pause/abort from there. Telemetry is *not* overlaid on the 3D bridge model in v1; that comes with custom pantheon.
+Why Blender for v1: 3D mesh viewing, rotation, and face selection are already world-class in Blender, and the `bpy` Python API makes the whole add-on ~100 lines. The custom app comes later — for now, the operator is *us*, not a truck operator, and we can use Blender. Full design and add-on code in [pantheon/README.md](pantheon/README.md).
 
 **Long-term — custom Tauri + React app.**
-Blender is not a field-ops UX — truck operators should not be learning Blender. Once the v1 pipeline has proven the workflow and the problem space is well understood, pantheon becomes a purpose-built app. Existing pieces to lean on at that point:
-- **Three.js / React Three Fiber** for 3D mesh visualization inside the Tauri app.
-- **QGroundControl** source as a reference for telemetry display patterns (not embedded).
-- **Skybrush Live** (React/TypeScript) — open source GCS frontend, individual map/telemetry components can be borrowed.
+Blender is not a field-ops UX. Once v1 has proven the workflow, pantheon becomes a purpose-built desktop app:
+- **Tauri shell** (single binary, Win/macOS/Linux, ~10 MB, not Electron).
+- **React + Three.js / React Three Fiber** for the 3D viewer. Borrow component patterns from Skybrush Live.
+- **Same intent file format** — the data contract with oracle does not change, so the migration is a UI swap, not a rewrite.
 
-What custom pantheon eventually owns: the 3D structure viewer, the mission painting and planning UI, the plan-to-drone-path compiler (ported out of the Blender plugin), and a live telemetry overlay on the 3D bridge model. **This is the core product moat.** v1 exists to learn the problem; v2 exists to win on UX.
+What the custom app *adds* on top of v1's scope: a plan review UI (renders `HivemindPlan` from oracle with 3D path preview, timeline scrubber, approve/modify/reject), live telemetry overlay on the *same* 3D bridge model the operator authored against, and mid-execution controls wired to oracle's amendment API. **This is the core product moat.** v1 exists to learn the problem; the custom app exists to win on UX.
 
 **v1 vs. custom pantheon at a glance:**
 
-| Capability | v1 (Blender + Skybrush Studio) | Custom pantheon (later) |
+| Capability | v1 (Blender add-on) | Custom pantheon (later) |
 |---|---|---|
 | 3D scan visualization | Blender (world-class) | Three.js / R3F |
-| Drone path editing | Skybrush Studio (keyframe, visual) | Built from scratch |
-| Collision checking | Skybrush Studio (built in) | Built from scratch |
-| Safety validation | Skybrush Studio (speed/accel/distance) | Built from scratch |
-| Mission export to drones | Skybrush Server (`.skyc`) | Built on MAVSDK |
-| Surface-following paths | **Hivemind Blender plugin** | Built from scratch |
-| Refill / rotation scheduling | **Hivemind Blender plugin** | Built from scratch |
-| Live ops dashboard | Skybrush Live (2D map) | 3D-overlaid telemetry, custom |
+| Face selection | Blender edit mode | Built from scratch |
+| Mark / name regions | Hivemind add-on | Built from scratch |
+| Export intent.json | Hivemind add-on | Built from scratch |
+| Plan review (3D path preview, timeline) | — (CLI summary from oracle) | Built from scratch |
+| Live telemetry on 3D model | — (Skybrush Live 2D map) | Built from scratch |
+| Mid-execution controls | — (oracle CLI) | Built from scratch |
 | Field-ready UX | No — Blender is complex | Yes — purpose-built for operators |
 
 #### oracle — build 30% / reuse 70%

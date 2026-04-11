@@ -7,9 +7,10 @@ The spec is split by phase:
 - **[v1/](v1/README.md)** — proof of concept. One worker drone, one laptop, no RTK, no swarm. Goal: fly to a wall, spray paint, come back. ~€746 total.
 - **[v2/](v2/README.md)** — production. 10 worker drones, RTK base station, rugged ground station on the truck, refill station, scout drone. Goal: paint a real bridge commercially. ~€13K total.
 
-Plus a payload-specific subfolder that's referenced from both phases:
+Plus payload-specific subfolders. The same drone platform supports two **swappable payload modules** — paint or pressure-wash — selected via legion config at startup. Frame, motors, ESCs, Pixhawk, Pi, and legion agent are identical between the two:
 
-- **[nozzle/](nozzle/README.md)** — spray mechanism build doc. v1's full mechanism (SG90 servo pressing a standard aerosol spray can, ~€10) lives here in detail: parts, assembly, wiring, software, test procedure, swap procedure, specs. v2 replaces this mechanism with a peristaltic pump + bayonet cartridge for industrial coatings, but the v1 rig stays as the canonical bench-test reference.
+- **[nozzle/](nozzle/README.md)** — **paint payload**. v1's full mechanism (SG90 servo pressing a standard aerosol spray can, ~€10) lives here in detail: parts, assembly, wiring, software, test procedure, swap procedure, specs. v2 replaces the aerosol can with a peristaltic pump + bayonet cartridge for industrial coatings, but the v1 rig stays as the canonical bench-test reference.
+- **[wash/](wash/README.md)** — **pressure-wash payload (counter-thrust)**. Solenoid valve + pressure nozzle + a 64 mm EDF on the opposite side of the frame that produces matching counter-thrust to cancel the wash nozzle's reaction force. ~€50 add-on per drone. *Designed but not built in v1* — the wash variant becomes practical once the v1 paint flight loop is validated and the v2 platform is in service.
 
 For project context (what Hivemind is, what each submodule does, the economics) see the top-level [README](../README.md). For the safety / collision-avoidance architecture that drives several hardware decisions (RTK base station, ToF sensor, distinct RTL altitudes per drone), see [oracle/README.md → Safety and deconfliction](../oracle/README.md#safety-and-deconfliction).
 

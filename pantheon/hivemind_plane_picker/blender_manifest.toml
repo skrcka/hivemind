@@ -1,0 +1,15 @@
+schema_version = "1.0.0"
+
+id = "hivemind_plane_picker"
+version = "0.1.0"
+name = "Hivemind Plane Picker"
+tagline = "Mark mesh regions and export them as Hivemind intent files"
+maintainer = "Hivemind <noreply@hivemind.local>"
+type = "add-on"
+
+tags = ["3D View", "Mesh"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+copyright = ["2026 Hivemind"]

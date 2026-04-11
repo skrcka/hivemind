@@ -1,0 +1,22 @@
+[project]
+name = "hivemind-plane-picker"
+version = "0.1.0"
+description = "Blender add-on for marking paint regions on 3D structure scans and exporting them as Hivemind intent files"
+requires-python = ">=3.11"
+license = { text = "GPL-3.0-or-later" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "RUF"]
+ignore = [
+    # Blender's bpy.props uses bare-class-attribute annotations that ruff
+    # sometimes flags. We accept the convention.
+    "RUF012",
+]
+
+[tool.ruff.format]
+quote-style = "double"

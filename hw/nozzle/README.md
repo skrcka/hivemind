@@ -1,8 +1,10 @@
-# Hivemind hardware — spray mechanism (nozzle)
+# Hivemind hardware — spray mechanism (nozzle, paint payload)
 
-> Parent: [hw/README.md](../README.md)
+> Parent: [hw/README.md](../README.md) · Sibling payload: [hw/wash](../wash/README.md) (pressure-wash with counter-thrust)
 
-This is the canonical build doc for the spray mechanism. v1 uses the **servo + standard aerosol spray can** approach described here. v2 will move to a peristaltic pump + bayonet cartridge for industrial coatings (not yet documented in detail — see [hw/v2](../v2/README.md)), but the v1 mechanism stays as the reference for cheap bench testing and prototyping any new payload design.
+This is the canonical build doc for the **paint payload**. v1 uses the **servo + standard aerosol spray can** approach described here. v2 will move to a peristaltic pump + bayonet cartridge for industrial coatings (not yet documented in detail — see [hw/v2](../v2/README.md)), but the v1 mechanism stays as the reference for cheap bench testing and prototyping any new payload design.
+
+The paint payload is one of two swappable payload modules on the same drone platform — see [hw/wash](../wash/README.md) for the pressure-wash variant. Frame, Pixhawk, Pi, and legion agent are identical between the two; only the bottom-plate hardware and the AUX wiring differ.
 
 ## Concept in one sentence
 
