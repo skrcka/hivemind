@@ -1,0 +1,51 @@
+[package]
+name = "legion"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Hivemind on-drone agent — Pi-side runtime"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "legion"
+path = "src/main.rs"
+
+[features]
+default = []
+# Enable real Pi 5 hardware drivers via rppal. Linux-only; the default
+# build on macOS/Windows uses `MockPayload` and is SITL/dev-ready.
+pi-hardware = ["dep:rppal"]
+
+[dependencies]
+hivemind-protocol = { workspace = true, features = ["std", "tcp", "serial"] }
+legion-core = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+
+# Serialisation + persistence
+serde = { workspace = true, features = ["derive", "std"] }
+serde_json = { workspace = true }
+tempfile = "3.13"
+
+# Logging + errors
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# CLI + config
+clap = { workspace = true }
+figment = { workspace = true }
+
+# Async helpers
+futures = { workspace = true }
+
+# Pi-only hardware driver. Behind the `pi-hardware` feature so the
+# default build works on macOS/Windows dev machines.
+rppal = { version = "0.19", optional = true }
+
+[dev-dependencies]
+tempfile = "3.13"

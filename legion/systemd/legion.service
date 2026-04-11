@@ -1,0 +1,29 @@
+[Unit]
+Description=Hivemind legion on-drone agent
+Documentation=https://github.com/hivemind/hivemind/blob/master/legion/README.md
+After=network.target
+
+[Service]
+Type=simple
+User=legion
+Group=legion
+ExecStart=/usr/local/bin/legion serve --config /etc/legion/config.toml
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info,legion=debug
+
+# Security hardening. The binary needs GPIO/I2C/PWM/SPI + tty access;
+# everything else is locked down.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+ReadWritePaths=/var/lib/legion
+SupplementaryGroups=dialout gpio i2c spi
+
+# Resource limits — legion is small.
+LimitNOFILE=4096
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

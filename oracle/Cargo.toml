@@ -1,0 +1,70 @@
+[package]
+name = "oracle"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Hivemind orchestrator binary — truck-side runtime"
+
+# `oracle` is intentionally outside the top-level workspace right now (see the
+# top-level Cargo.toml). Once that exclude is lifted, the deps below can shift
+# to `{ workspace = true }` overrides where appropriate.
+
+[lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+too_many_arguments = "allow"
+too_many_lines = "allow"
+
+[[bin]]
+name = "hivemind"
+path = "src/main.rs"
+
+[dependencies]
+hivemind-protocol = { path = "../protocol", features = ["std", "tcp", "serial"] }
+
+# Async runtime + HTTP/WS server
+tokio = { version = "1.40", features = ["full"] }
+axum = { version = "0.8", features = ["ws", "macros"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Persistence
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "uuid", "migrate"] }
+
+# Serialisation
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Logging + errors
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+thiserror = "1.0"
+anyhow = "1.0"
+
+# CLI + config
+clap = { version = "4.5", features = ["derive"] }
+figment = { version = "0.10", features = ["toml", "env"] }
+
+# Time + IDs
+time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
+uuid = { version = "1.10", features = ["v7", "serde"] }
+
+# Geometry + hashes
+glam = { version = "0.29", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+
+# Async helpers
+futures = "0.3"
+async-trait = "0.1"
+
+[dev-dependencies]
+tempfile = "3.13"

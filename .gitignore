@@ -1,2 +1,55 @@
-/target
+# ─── Rust ────────────────────────────────────────────────────────────
+# Catches the workspace `target/` at the repo root AND any excluded
+# crate's own `target/` next to its Cargo.toml. Note: `oracle` is
+# intentionally excluded from the workspace per Cargo.toml, so it
+# produces `oracle/target/` which the previous anchored `/target`
+# pattern did NOT cover.
+target/
 **/*.rs.bk
+
+# Coverage profiles (cargo-llvm-cov, tarpaulin, grcov)
+*.profraw
+*.profdata
+tarpaulin-report.html
+lcov.info
+cobertura.xml
+
+# ─── Oracle / SQLite runtime state ───────────────────────────────────
+# Oracle persists fleet state, audit log, and step progress to SQLite
+# (see oracle/README.md → Persistence). Devs running the daemon
+# locally will produce DB files; never commit them.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ─── Environment / secrets ───────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ─── Future Tauri pantheon (Node.js side) ────────────────────────────
+node_modules/
+
+# ─── Logs ────────────────────────────────────────────────────────────
+*.log
+
+# ─── Patch / merge debris ────────────────────────────────────────────
+*.orig
+*.rej
+
+# ─── IDEs and editors ────────────────────────────────────────────────
+.vscode/
+.idea/
+.fleet/
+.zed/
+*.swp
+*.swo
+*~
+
+# ─── OS metadata ─────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+desktop.ini

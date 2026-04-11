@@ -13,7 +13,22 @@
       "Bash(cargo check:*)",
       "Bash(cargo test:*)",
       "Bash(cargo clippy:*)",
-      "Bash(find /Users/skrcka/arxvel/hivemind/protocol /Users/skrcka/arxvel/hivemind/Cargo.toml /Users/skrcka/arxvel/hivemind/.gitignore -type f -not -path */target/*)"
+      "Bash(find /Users/skrcka/arxvel/hivemind/protocol /Users/skrcka/arxvel/hivemind/Cargo.toml /Users/skrcka/arxvel/hivemind/.gitignore -type f -not -path */target/*)",
+      "Bash(cargo search:*)",
+      "Bash(for c:*)",
+      "Bash(do cargo:*)",
+      "Read(//Users/skrcka/arxvel/hivemind/**)",
+      "Bash(done)",
+      "Bash(python3 -m py_compile hivemind_plan_preview/__init__.py hivemind_plan_preview/coords.py hivemind_plan_preview/plan_loader.py hivemind_plan_preview/timeline.py hivemind_plan_preview/scene_builder.py hivemind_plan_preview/operators.py hivemind_plan_preview/ui.py hivemind_plan_preview/cli.py)",
+      "Bash(python3 hivemind_plan_preview/cli.py --help)",
+      "Bash(python3:*)",
+      "Bash(ruff check:*)",
+      "Bash(make lint:*)",
+      "Bash(cargo build:*)",
+      "Bash(./target/debug/legion debug:*)",
+      "Bash(cargo run:*)",
+      "Bash(find /Users/skrcka/arxvel/hivemind -name *.db -o -name *.profraw -o -name *.blend1 -o -name .env* -o -name node_modules)",
+      "Bash(git check-ignore:*)"
     ]
   }
 }

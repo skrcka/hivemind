@@ -1,3 +1,7 @@
+# Pantheon-specific ignores. Project-wide patterns (IDE files, OS
+# metadata, *.log, etc.) live in the repo-root .gitignore.
+
+# ─── Python ──────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
@@ -7,6 +11,18 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .venv/
+
+# ─── Distribution artifacts ──────────────────────────────────────────
+# `make build` produces dist/<addon>-<version>.zip per add-on.
 *.zip
 build/
 dist/
+
+# ─── Blender ─────────────────────────────────────────────────────────
+# Numbered backups Blender writes alongside saved .blend files, plus
+# autosave files. We deliberately do NOT ignore *.blend itself so
+# fixture or sample scenes can be committed if useful later.
+*.blend1
+*.blend2
+*.blend3
+*.blend@

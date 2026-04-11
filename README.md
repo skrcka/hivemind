@@ -14,13 +14,18 @@ The same drone platform supports two **swappable payload modules** — paint and
 Servo-driven spray actuation mechanism concept using 3D-printed linkages and a controlled spray actuator. See `BBC/README.md`.
 
 ### pantheon
-Operator control plane. Long-term: Tauri + React desktop application. **v1: small Blender add-on (Hivemind Plane Picker).**
+Operator control plane. Long-term: Tauri + React desktop application. **v1: two small sibling Blender add-ons.**
 
 Pantheon is the **CAD tool** of the system — it is where the operator opens a 3D scan of the structure, picks the surfaces to be painted, and exports an *intent file* for oracle. It does not generate drone paths, schedule sorties, or talk to drones — those are oracle's job. The boundary is intentionally sharp: pantheon = *what to paint*, oracle = *how to fly it*.
 
-For v1, pantheon is a ~100-line Blender add-on with three operations: import a mesh, mark face selections as named regions, export `intent.json`. The custom Tauri + React app comes later, once v1 has proven the workflow and the problem space is well understood — at which point pantheon also gains a plan review UI and a live telemetry overlay on the 3D model. The intent file format stays the same across phases, so the migration is a UI swap, not a rewrite.
+For v1, pantheon ships as two small Blender add-ons under [pantheon/](pantheon/README.md):
 
-Detailed design, the v1 add-on code, and the intent file schema in [pantheon/README.md](pantheon/README.md).
+- **`hivemind_plane_picker`** — three operations: import a mesh, mark face selections as named regions, export `intent.json`. This is the input to oracle's slicer.
+- **`hivemind_plan_preview`** — loads oracle's `HivemindPlan` JSON output and builds a Blender scene with the walls + one animated dot per drone. Scrubbing the timeline plays back the whole sortie ballet over the plan's wall-clock duration. This is how the operator (or developer) eyeballs whether a slicer output makes sense before approving it. Runs both as an in-Blender operator and as a headless `blender --background --python` CLI.
+
+The custom Tauri + React app comes later, once v1 has proven the workflow and the problem space is well understood — at which point pantheon also gains a real plan review UI and a live telemetry overlay on the 3D model. The intent and plan file formats stay the same across phases, so the migration is a UI swap, not a rewrite.
+
+Detailed design, both add-on implementations, and the intent file schema in [pantheon/README.md](pantheon/README.md).
 
 ### legion
 On-drone agent. One instance per drone.

@@ -356,6 +356,112 @@ A more "correct" format would be a directory: one OBJ file per region plus a man
 
 If a future version needs the OBJ-per-region split, the manifest stays JSON and inlined `faces` becomes a `mesh_file` reference. That's a forward-compatible change.
 
+## v1 plan preview — `hivemind_plan_preview`
+
+The plane picker emits intents *into* oracle. The **plan preview** add-on goes the other way: it loads oracle's [`HivemindPlan`](../oracle/README.md#the-plan-object) JSON output and builds a Blender scene that visualizes it. Walls go in as mesh objects, drones go in as animated dot markers, and the timeline scrubs through the whole sortie ballet at the plan's wall-clock duration.
+
+Until the long-term Tauri pantheon ships its real plan-review UI ([described below](#long-term--custom-tauri--react-app)), this is how an operator (or developer) eyeballs whether a slicer output makes sense.
+
+### What it does
+
+Given:
+- a `plan.json` from oracle (`oracle plan --intent intent.json --drones 6 --out plan.json`)
+- the `intent.json` that produced it (or the embedded intent inside the plan)
+
+The tool builds a fresh Blender scene containing:
+
+- **One mesh per intent region**, in a `walls` collection. Each region's triangles become a single mesh object, named `wall_<region_id>`.
+- **One marker per drone**, in a `drones` collection. Each marker is a small UV sphere named `drone_<drone_id>` and tinted from a built-in palette (red, blue, green, yellow, …).
+- **Location keyframes** on every drone marker, sampled across `schedule.total_duration_s × fps` frames. At each frame the marker is placed at the drone's interpolated position along its current sortie's path; before its first sortie, it parks at the first waypoint; after its last sortie, it stays at the final waypoint.
+- The scene's frame rate, frame range, and metric units are configured to match the plan.
+
+Scrubbing the Blender timeline plays the whole plan back. Multiple drones animate simultaneously when the plan has overlapping sorties.
+
+### Coordinate handling
+
+- **Wall vertices** are taken from the intent at face value. v1 assumes the intent is georeferenced as **local ENU metres** around an RTK base (the project's [spatial-alignment pipeline default](../README.md#spatial-alignment-zeroing)) — these import directly into Blender's metric units.
+- **Waypoints** in the plan are GPS (`lat`, `lon`, `alt_m`), because that's what `hivemind-protocol::Waypoint` carries on the wire. The tool projects every waypoint into the same local ENU frame using a flat-earth approximation around a chosen origin.
+- **The origin** defaults to the first waypoint of the first sortie (so waypoints sit near (0, 0, 0)). Pass `--origin lat,lon,alt` to override — useful if the intent's ENU origin and the plan's waypoint cluster don't naturally line up.
+
+The flat-earth projection is accurate to a few centimetres for areas a few hundred metres across, which is more than enough for visualization. It's not navigation-grade and never used for actual flight commands.
+
+### Two ways to run it
+
+**1. Inside Blender (interactive):**
+
+After `make install`, the add-on contributes a **Plan Preview** panel under the existing `Hivemind` tab in the 3D viewport. Click `Build Plan Preview…`, point at a plan and intent, optionally tweak FPS / marker radius / frame sampling, and the scene populates. Drone summary + warnings appear in the status bar.
+
+**2. Headless (CLI, via Blender's `--background --python`):**
+
+```bash
+blender --background --python pantheon/hivemind_plan_preview/cli.py -- \
+    --plan path/to/plan.json \
+    --intent path/to/intent.json \
+    --out path/to/scene.blend \
+    --fps 24 \
+    --marker-radius 0.5
+```
+
+This is what you want for CI ("re-render the preview every time the slicer changes"), reproducible screenshots, or batch generating one scene per plan in a sweep. The script writes a `.blend` file you can open later, no GUI session required.
+
+### Implementation
+
+```
+pantheon/hivemind_plan_preview/
+├── blender_manifest.toml             # Blender 4.2+ extension manifest
+├── __init__.py                       # registration (lazy bpy imports)
+├── coords.py                         # pure: GPS ↔ local ENU
+├── plan_loader.py                    # pure: JSON → frozen dataclasses
+├── timeline.py                       # pure: time → drone position interpolation
+├── scene_builder.py                  # bpy: build the actual Blender scene
+├── operators.py                      # bpy: in-Blender operator (file picker dialog)
+├── ui.py                             # bpy: panel section in the Hivemind tab
+└── cli.py                            # standalone CLI entry point
+```
+
+The same architectural split as the plane picker: **pure logic in modules with no `bpy` dependency, bpy isolated in three files**.
+
+- **`coords.py`** — flat-earth GPS↔ENU. Tested in isolation; round-trip preserved to sub-millimetre at typical bridge scales.
+- **`plan_loader.py`** — parses both the plan JSON and the intent JSON into frozen dataclasses (`Intent`, `IntentRegion`, `Triangle`, `Plan`, `Sortie`, `SortieStep`, `Waypoint`). Tolerant of missing optional fields. If the plan omits per-sortie start times, sorties for the same drone are scheduled sequentially (each starts when the previous one ends) — handles the v1 single-drone case cleanly and produces sensible-if-pessimistic timelines for multi-drone plans that don't yet emit a schedule.
+- **`timeline.py`** — `sortie_position_at(sortie, t, initial_position, convert)` returns the drone's position at any wall-clock time. Walks steps, finds the active one, and interpolates within it. Path-following steps distribute time **across segments proportionally to distance** (so a long initial transit doesn't get crammed into the same time slice as a short final segment). The `convert` callback projects waypoints into the target frame, so the same logic works for any coordinate system.
+- **`scene_builder.py`** — the only file that imports `bpy` unconditionally. Builds the walls, spawns the drones, sets the keyframes, optionally saves the `.blend`. Returns a `BuildResult` with counts and warnings.
+- **`__init__.py`** — defers bpy imports into `register()` so the pure modules stay importable in stock Python for unit tests.
+
+### Tests
+
+The pure modules are covered by `tests/test_coords.py`, `tests/test_plan_loader.py`, and `tests/test_timeline.py` — 33 tests in total, runnable with stock Python:
+
+```bash
+make test
+```
+
+Test classes cover the load-bearing edges:
+
+- **`coords`**: origin-maps-to-zero, pure-north → +Y only, pure-east → +X only, altitude pass-through, signed quadrants, round-trip.
+- **`plan_loader`**: minimal/full intents, missing optional fields, triangle-must-be-3-verts, plan with embedded vs external intent, schedule passthrough vs derived-from-step-durations, sequential per-drone start times, optional `path` field, file IO round-trip.
+- **`timeline`**: before/after sortie boundaries, midpoint-of-step, step-boundary, offset start times, distance-proportional path interpolation, zero-duration steps, coincident waypoints (no division-by-zero).
+
+The bpy-using modules (`scene_builder`, `operators`, `ui`) have no automated tests because they require a Blender process. Their correctness is bounded by (a) the test-covered pure modules they delegate to, and (b) interactive smoke testing in Blender after `make install`.
+
+### Install
+
+The Makefile installs both pantheon add-ons in one command:
+
+```bash
+cd pantheon
+make install     # symlinks both add-ons into Blender 5.1 user extensions
+```
+
+Then in Blender: `Edit → Preferences → Add-ons → search "Hivemind"` and enable both. The 3D-viewport `N`-panel grows a `Hivemind` tab containing the plane picker and the plan-preview panels stacked together.
+
+### What this tool deliberately doesn't do
+
+- **No drone meshes / models / propellers.** A coloured dot is enough to see the ballet. The point of the v1 tool is verification of slicer logic, not pretty renders.
+- **No real-time scene updates.** The scene is built from a frozen plan JSON. To see a new plan, run the build again — it clears and rebuilds (or pass `--no-clear` to layer it on the existing scene).
+- **No telemetry overlay.** This tool visualizes the *plan*, not live execution. Live telemetry on the same 3D model is a long-term-pantheon feature ([see below](#long-term--custom-tauri--react-app)).
+- **No GCP fallback.** Non-georeferenced intents (mesh-space coordinates with no GPS alignment) get imported as-is, but their walls and the GPS-projected waypoints likely won't line up. Use `--origin` to nudge them, or fix the intent's `georeferenced` flag upstream.
+- **No collision-pair highlighting.** Layer 1 / Layer 2 conflict visualization belongs in the long-term plan-review UI, not in this v1 tool.
+
 ## Long-term — custom Tauri + React app
 
 Blender is the right choice for v1 *us*. It is the wrong choice for a truck operator paid to push paint, not learn 3D modelling software. The long-term pantheon is a purpose-built desktop app:

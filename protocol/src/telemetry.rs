@@ -33,22 +33,23 @@ pub struct Telemetry {
 /// field — it's where the drone *is*, not where it should go.
 ///
 /// [`Waypoint`]: crate::sortie::Waypoint
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq)]
 pub struct Position {
     pub lat: f64,
     pub lon: f64,
     pub alt_m: f32,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq)]
 pub struct Attitude {
     pub roll_deg: f32,
     pub pitch_deg: f32,
     pub yaw_deg: f32,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum GpsFixType {
+    #[default]
     None,
     Fix2d,
     Fix3d,
@@ -59,8 +60,9 @@ pub enum GpsFixType {
 /// The drone's high-level lifecycle phase. Updated by legion's executor and
 /// safety loop, surfaced in every `Telemetry` frame so oracle's fleet view is
 /// always current.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DronePhase {
+    #[default]
     Idle,
     Armed,
     InAir,

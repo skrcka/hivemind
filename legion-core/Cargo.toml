@@ -1,0 +1,22 @@
+[package]
+name = "legion-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Portable executor + safety + hardware traits for Hivemind legion (no_std + alloc)"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Pull in std-only conveniences (Error trait impls, etc). Default builds are no_std.
+std = []
+
+[dependencies]
+hivemind-protocol = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1.40", features = ["macros", "rt", "rt-multi-thread", "time", "sync"] }
+futures = "0.3"
