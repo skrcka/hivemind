@@ -16,9 +16,9 @@ This is where the human sits. Pantheon visualizes 3D scans of target structures,
 For v1, "pantheon" is not a custom app — it is Blender (for 3D viz and path editing) + Skybrush Studio (for drone trajectory export and safety validation) + a small set of Hivemind Python plugins that add the industrial-painting bits (surface-following toolpaths, refill scheduling). The custom Tauri + React app is built later, once Blender's UX proves too clunky for field operators and the problem space is well understood.
 
 ### legion
-Swarm communication and coordination layer.
+On-drone agent. One instance per drone.
 
-Legion handles drone-to-drone communication, formation, and per-drone status reporting within the swarm. It receives per-drone instructions from oracle and is responsible for keeping the swarm coherent in the field — distributing commands, propagating state, and surfacing status back up the stack.
+Legion is **not** a swarm mesh. There is no drone-to-drone communication anywhere in Hivemind — every drone talks only to oracle, in a star topology. Legion is the small agent that runs on each drone's companion computer (a Raspberry Pi alongside the Pixhawk). It receives sortie commands from oracle, drives PX4 to execute them, reports telemetry back to oracle, and runs a **local safety loop** (wall avoidance via ToF, oracle-heartbeat watchdog, low-battery RTL, paint-empty RTL) that protects the drone independently of oracle if the link drops. See [oracle/README.md](oracle/README.md#safety-and-deconfliction) for the full three-layer safety model.
 
 ### vanguard
 Standalone scout drone system (single drone for now, manually operated).
@@ -28,21 +28,33 @@ Vanguard's job is to fly the target structure and produce a 3D map of it. The re
 ### oracle
 Orchestrator and integration hub. Mix of hardware and software.
 
-Oracle is the bridge between pantheon (intent) and legion (execution). It handles communication with all drones, ingests data from every part of the system, and uploads mission plans to the drones. Pantheon hands plans to oracle; oracle distributes them to the swarm via legion and routes telemetry back the other way.
+Oracle is the bridge between pantheon (intent) and legion (execution). It handles communication with all drones, ingests data from every part of the system, and uploads mission plans to the drones. Pantheon hands plans to oracle; oracle distributes them to the swarm via legion and routes telemetry back the other way. Detailed design in [oracle/README.md](oracle/README.md).
+
+### hw
+Hardware specification — frames, flight controllers, payloads, ground station, RTK, refill. Split by phase: [hw/v1](hw/v1/README.md) (~€746, one drone, prove the pipeline) and [hw/v2](hw/v2/README.md) (~€13K, 10-drone production system on a truck). The v1 spray mechanism — SG90 servo pressing a standard hardware-store aerosol can, ~€10 of parts — has its own build doc at [hw/nozzle](hw/nozzle/README.md). Index in [hw/README.md](hw/README.md).
 
 ## Data flow
 
 ```
-vanguard ──(3D scan)──▶ pantheon ──(plan)──▶ oracle ──(per-drone instructions)──▶ legion ──▶ swarm
-                            ▲                   │
-                            └──(telemetry/status)┘
+vanguard ──(3D scan)──▶ pantheon ──(intent)──▶ oracle ──(sorties via MAVLink)──┐
+                            ▲                   │                              │
+                            │                   │                  ┌───────────┼───────────┐
+                            │                   │                  ▼           ▼           ▼
+                            │                   │              legion 01   legion 02   legion 03
+                            │                   │                 │           │           │
+                            │                   │                 ▼           ▼           ▼
+                            │                   │               PX4         PX4         PX4
+                            │                   │                 │           │           │
+                            └──(telemetry)──────┴◀────────────────┴───────────┴───────────┘
+                                                    (no drone-to-drone links)
 ```
 
 1. **vanguard** scans the structure.
-2. **pantheon** ingests the scan, the operator authors a plan.
-3. **pantheon** hands the plan to **oracle**.
-4. **oracle** uploads per-drone instructions and brokers all drone communication.
-5. **legion** runs the swarm in the field and reports status back through oracle to pantheon.
+2. **pantheon** ingests the scan; the operator authors an *intent* ("paint these regions to this spec").
+3. **pantheon** hands the intent to **oracle**, which slices it into per-drone sorties (see oracle's plan/apply lifecycle).
+4. After operator approval, **oracle** uploads sorties to each drone via MAVLink and supervises execution.
+5. **legion** (on each drone) drives PX4 through the sortie and streams telemetry back to oracle.
+6. All coordination is **star-topology through oracle** — drones never talk to each other.
 
 ## Technology stack
 
@@ -175,16 +187,19 @@ Two viable paths:
 
 The oracle↔drone link is just MAVLink over radio/WiFi — MAVSDK handles it. What Hivemind adds is the business logic: mission decomposition (turning "paint this 50m² area" into per-drone waypoint sequences), drone rotation scheduling (who breaks off to refill paint and when), and routing telemetry back to pantheon.
 
-#### legion — build 20% / reuse 80%
-Two architectural options:
+#### legion — build 30% / reuse 70%
+**Star topology, no mesh.** Legion is the on-drone agent — one instance per drone, running on the companion computer (typically a Raspberry Pi alongside the Pixhawk). It is *not* a peer-to-peer swarm comms layer. Every drone talks only to oracle. There is no drone-to-drone communication anywhere in Hivemind.
 
-**Approach A — Centralized (recommended for v1).**
-There is no "legion" as a separate runtime layer. Oracle sends each drone its complete mission. Drones execute independently (like drone shows). Coordination reduces to "don't collide," which is solved at planning time by deconflicting paths. This is how drone shows work and it scales to thousands of drones.
+This is deliberate, and it follows how 5,000-drone shows work: zero peer comms, all coordination through the ground station. For Hivemind, work happens within a few hundred metres of the truck — WiFi reaches every drone, latency is <50 ms, oracle can run a 5 Hz fleet monitor for everyone. Peer-to-peer mesh networking between moving drones (discovery, routing, churn handling) is an entire system that adds nothing for this use case.
 
-**Approach B — Distributed (v2+).**
-Drones talk to each other, negotiate, adapt in flight. Significantly harder, and unnecessary for bridge painting where the structure doesn't move and the work is predictable. Defer.
+What legion runs on each drone:
+- **Sortie executor.** Receives sortie commands from oracle and drives PX4 through them via MAVLink offboard mode.
+- **Telemetry stream.** Pushes position, attitude, battery, paint level, ToF distance, sortie progress back to oracle.
+- **Local safety loop** (~10 Hz) — the last-resort layer that runs whether or not oracle is reachable: ToF wall avoidance, oracle-heartbeat watchdog (stop spraying after 5 s without contact, RTL after 30 s), battery-critical RTL, paint-empty RTL.
 
-For v1, "legion" is effectively pre-planned PX4 offboard paths with collision deconfliction baked into the plan compiler in pantheon.
+What legion does *not* do: collision avoidance with other drones (that's oracle's job — see [oracle's safety section](oracle/README.md#safety-and-deconfliction)), formation flying, distributed planning, or anything that requires knowing about other drones.
+
+For v1 with one drone, legion is a few hundred lines of Python on the Pi — primarily the local safety loop and the MAVSDK-Python sortie executor. It scales unchanged to 3, then 10 drones because the architecture is star, not mesh.
 
 ### Summary table
 
@@ -193,8 +208,8 @@ For v1, "legion" is effectively pre-planned PX4 offboard paths with collision de
 | **vanguard** | QGroundControl + OpenDroneMap | Import pipeline | Mostly solved |
 | **pantheon (v1)** | Blender + Skybrush Studio + Skybrush Live | Surface-path & refill-scheduler Blender plugins | Ship on this; learn the problem |
 | **pantheon (later)** | Three.js, Skybrush Live components | 3D planning UI, mission compiler, live 3D telemetry | **Core product moat** |
-| **oracle** | Skybrush Server or MAVSDK-Python | Mission decomposition, scheduling | Extend or build on existing |
-| **legion** | PX4 offboard mode + pre-planned paths | Collision deconfliction at plan time | Skip as separate layer for v1 |
+| **oracle** | Skybrush Server or MAVSDK-Python | Mission decomposition, scheduling, fleet monitor (deconfliction) | Extend or build on existing |
+| **legion** | PX4 offboard mode + MAVSDK-Python on Pi | On-drone sortie executor + local safety loop | Star topology, no drone-to-drone comms |
 | **drone firmware** | PX4 (unmodified) | — | Don't touch |
 | **comms protocol** | MAVLink (+ FlockWave if using Skybrush) | — | Don't reinvent |
 
@@ -336,3 +351,93 @@ A georeferenced scan is necessary but not sufficient. Absolute GPS drifts, and 1
 - **pantheon** needs GCP marking and the Kabsch transform as a tool for non-georeferenced scans. The mission compiler always emits GPS waypoints, never mesh-space coordinates. v1 lives in Blender, where ArUco identification and point picking are straightforward Python plugin work.
 - **oracle** distributes RTK corrections to the swarm (or delegates to Skybrush Server, which already does this) and exposes the pre-flight alignment-check workflow: "fly drone N to known point P, read back actual GPS, compute and apply mission offset."
 - **drones** carry an RTK GPS receiver and a ToF/ultrasonic distance sensor for surface-relative standoff. PX4 already supports both via standard sensor drivers — no firmware changes needed.
+
+## Economics
+
+Reference case throughout this section: a **medium steel bridge** with roughly **5,000 m² of paintable surface area**.
+
+### Traditional bridge painting
+
+The cost structure is dominated by access and labor, not paint. Scaffolding alone is typically 40–50% of the bill.
+
+| Cost component | $/m² | % of total | Notes |
+|---|---|---|---|
+| Scaffolding / containment | $50–150 | 40–50% | Setup, rental, teardown, environmental containment |
+| Labor (painters + riggers) | $40–100 | 30–40% | Labor is 75–80% of on-site coating cost |
+| Surface prep (blasting) | $20–50 | 10–15% | Often the slowest step |
+| Paint materials | $5–15 | 5–8% | Multi-coat industrial systems |
+| Traffic management | $10–30 | 5–10% | Lane closures, flaggers, night work |
+| **Total** | **$130–270/m²** | | |
+
+For the 5,000 m² reference bridge: **$650K – $1.35M**. Real-world point: a Maine contract to clean and paint three underpass bridges was bid at $1,595,000.
+
+**Timeline:** 3–6 months for a medium bridge, often longer due to weather delays and traffic restrictions.
+
+### Hivemind drone swarm
+
+**Capital expenditure (one-time):**
+
+| Item | Cost | Amortized over |
+|---|---|---|
+| 10× custom drones (~€800 each) | €8,000 | 100+ jobs |
+| Spare parts, batteries (20× sets) | €3,000 | Consumable |
+| RTK base station | €2,000 | All jobs |
+| Ground station (rugged tablet) | €1,000 | All jobs |
+| Truck/van outfitting (refill station) | €5,000 | All jobs |
+| Scout drone + camera (vanguard) | €3,000 | All jobs |
+| Software development | €??? | All jobs |
+| **Total hardware** | **~€22,000** | |
+
+Amortized over 50 bridge jobs: **~€440/job**, or **~€0.09/m²**.
+
+**Per-job operating costs:**
+
+| Cost component | $/m² | % of total | Notes |
+|---|---|---|---|
+| Operators (2 people × 5 days) | $8–15 | 30–40% | Drone operator + paint tech |
+| Paint materials | $5–15 | 25–35% | Same paint, same amount |
+| Drone consumables (batteries, props, nozzles) | $2–5 | 10–15% | Wear items |
+| Transport + setup | $2–4 | 5–10% | Truck to site, RTK setup, scan |
+| Equipment amortization | $1–2 | 3–5% | Fleet depreciation |
+| Insurance + regulatory | $2–5 | 5–10% | SORA, liability |
+| **Total** | **$20–45/m²** | | |
+
+For the 5,000 m² reference bridge: **$100K – $225K**. **Timeline:** 5–10 days (scan + plan + execute).
+
+### Side-by-side
+
+| | Traditional | Hivemind drone swarm | Delta |
+|---|---|---|---|
+| Cost per m² | $130–270 | $20–45 | **70–85% cheaper** |
+| 5,000 m² bridge | $650K–1.35M | $100K–225K | **$500K–1.1M saved** |
+| Duration | 3–6 months | 1–2 weeks | **~90% faster** |
+| Workers at height | 10–20 | 0 | **Eliminated** |
+| Scaffolding | Yes (40–50% of cost) | None | **Eliminated** |
+| Traffic disruption | Months of lane closures | Days | **Minimal** |
+| Weather sensitivity | High | Moderate | Similar |
+
+### Where the savings actually come from
+
+Hivemind isn't competing on painting *speed* — it's **deleting scaffolding**. Scaffolding and containment are 40–50% of a traditional bridge painting contract. They take weeks to erect, cost a fortune to rent, and create most of the traffic disruption. Removing that line item is the entire economic story. Painting throughput is secondary.
+
+This framing matters for product priorities: any feature that lets the drones replace scaffolding (better surface following, longer endurance, refill automation) compounds. Any feature that just makes spraying marginally faster does not.
+
+### Honest risks and caveats
+
+These are real and shape what v1 can credibly sell:
+
+- **Surface prep is the elephant in the room.** Traditional bridge painting is often 50%+ surface preparation — sandblasting old paint and removing rust. Drones can spray, but they cannot sandblast (the reaction forces would destabilize a small drone). v1 likely addresses **overcoating and touch-up only**, not full strip-and-repaint. That's a real subset of the market, not the whole thing.
+- **Containment requirements.** Environmental rules often require capturing overspray and old-paint debris, especially over water. Traditional jobs use plastic sheeting on the scaffolding. Hivemind needs an answer: a separate netting-deployment drone, or accepting only water-based coatings, or a constrained spray pattern that minimizes overspray.
+- **Coating quality verification.** Industrial coatings need specific film thickness (mils). A human painter measures wet film thickness as they go. Hivemind needs its own verification path — possibly a follow-up inspection drone with a coating thickness gauge.
+- **Weather window.** Drones typically cannot fly in winds above ~30 km/h (for a 2–3 kg quad). Bridges are often windy. Traditional crews can work in moderate wind because they're on scaffolding. This narrows the operational window.
+
+### The business case
+
+Even confined to overcoating work, the numbers are compelling:
+
+- The EU has ~500,000 road bridges requiring regular maintenance.
+- Average maintenance painting cycle: every 10–15 years.
+- 1% market capture = ~500 bridges/year.
+- At ~€100K savings per bridge → **~€50M/year in value created**.
+
+The economics clearly work. The binding constraint is not the technology — it's **SORA approval** (operational authorization for BVLOS swarm flight) and **proving coating quality meets spec**. Those, not the engineering, are what set the real timeline.
