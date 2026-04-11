@@ -10,6 +10,9 @@ The same drone platform supports two **swappable payload modules** — paint and
 
 ## Submodules
 
+### BBC
+Servo-driven spray actuation mechanism concept using 3D-printed linkages and a controlled spray actuator. See `BBC/README.md`.
+
 ### pantheon
 Operator control plane. Long-term: Tauri + React desktop application. **v1: small Blender add-on (Hivemind Plane Picker).**
 
