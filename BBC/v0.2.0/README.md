@@ -1,6 +1,8 @@
 # BBC Spraying Mechanism — v0.2.0
 
-Drone-mounted precision spraying system inspired by CNC airbrush setups. Enables autonomous spray painting from a drone platform with electrically controlled paint flow and air pressure.
+**BBC** is the name of the drone-mountable painting component — a self-contained spraying add-on that gives a drone the ability to spray paint. It is not the drone itself; the drone is the carrier platform on which BBC is installed.
+
+BBC is inspired by CNC airbrush setups and provides electrically controlled paint flow and air pressure for autonomous spray painting.
 
 ---
 
