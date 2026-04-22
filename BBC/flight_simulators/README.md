@@ -28,14 +28,14 @@ Supports **Software-In-The-Loop (SITL)** — run the exact same PX4 code as on a
 
 ---
 
-## 2. PX4 / ArduPilot + AirSim — *Great for realistic visuals & sensors*
+## 2. PX4 + AirSim — *Great for realistic visuals & sensors*
 
 [AirSim](https://github.com/microsoft/AirSim) (Microsoft, open-source, Unreal Engine) is excellent for custom drone development with high-fidelity visuals.
 
 **You can define your own drone physics:**
 - Mass, inertia, motor thrust, and torque.
 - Custom 3D frame model.
-- Run PX4 or ArduPilot inside it — the same firmware as on real hardware.
+- Run PX4 inside it (SITL) — the same firmware as on real hardware.
 
 Particularly useful for testing cameras, computer vision pipelines, or any scenario requiring photo-realistic sensor simulation.
 

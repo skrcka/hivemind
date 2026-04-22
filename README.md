@@ -107,7 +107,11 @@ async for position in drone.telemetry.position():
     print(f"Lat: {position.latitude_deg}, Lon: {position.longitude_deg}")
 ```
 
-**Skybrush** is the full swarm management layer — ground station UI, swarm coordination server, FlockWave protocol, and an ArduPilot firmware fork optimized for synchronized flight. Hivemind borrows from it where useful (oracle may extend Skybrush Server; pantheon may borrow components from Skybrush Live).
+**Skybrush** is the full swarm management layer — ground station UI, swarm coordination server, and the FlockWave protocol (plus its own firmware stack for synchronized flight). Hivemind borrows from it where useful (oracle may extend Skybrush Server; pantheon may borrow components from Skybrush Live).
+
+### Autopilot policy (PX4 only)
+
+This project standardizes on **PX4** for flight firmware. We **do not use, vendor, or depend on ArduPilot** in this repository due to licensing constraints. If you are contributing, do not add ArduPilot code, submodules, headers, or build artifacts; keep integrations at the MAVLink/MAVSDK level and target PX4. See `POLICY.md`.
 
 ### Module-by-module: build vs. reuse
 
