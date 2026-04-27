@@ -12,6 +12,9 @@ For the drone carrying the BBC component, we selected a **crocodile-style frame*
 
 ---
 
+## Open Source
+https://www.printables.com/model/275006-aesir-ii/files
+
 ## Frame Reference Images
 
 ![Crocodile Frame — View 1](crocodile_frame.jpg)

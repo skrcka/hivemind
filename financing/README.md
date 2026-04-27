@@ -21,6 +21,13 @@ Prague-based accelerator running since 2011. Offers a **remote 30-hour business 
 
 **Good fit if:** we are pre- or early-revenue and looking for structured fundraising preparation and investor introductions.
 
+
+### https://technologickainkubace.org/o-technologicke-inkubaci/vyzvy/
+
+### https://czechinvest.gov.cz/cz/Sluzby-pro-startupy/Akcelerace-startupu 
+
+### https://czechinvest.gov.cz/cz/Sluzby-pro-startupy/Podpora-startupu
+
 ---
 
 ## How to Use This File
