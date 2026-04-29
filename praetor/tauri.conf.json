@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.hivemind.praetor",
   "build": {
-    "beforeDevCommand": "cd ui && npm run dev",
-    "beforeBuildCommand": "cd ui && npm run build",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "ui/dist"
   },
@@ -30,7 +30,9 @@
     "active": false,
     "targets": "all",
     "category": "Utility",
-    "icon": ["icons/icon.png"],
+    "icon": [
+      "icons/icon.png"
+    ],
     "shortDescription": "Hivemind manual drone control with Xbox controller over MAVLink"
   },
   "plugins": {}

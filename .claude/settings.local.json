@@ -29,7 +29,9 @@
       "Bash(cargo run:*)",
       "Bash(find /Users/skrcka/arxvel/hivemind -name *.db -o -name *.profraw -o -name *.blend1 -o -name .env* -o -name node_modules)",
       "Bash(git check-ignore:*)",
-      "Bash(cargo fmt:*)"
+      "Bash(cargo fmt:*)",
+      "Bash(python3 -c \":*)",
+      "Bash(cargo tauri:*)"
     ]
   }
 }
